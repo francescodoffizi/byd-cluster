@@ -169,7 +169,58 @@ class BydClusterComm(private val context: Context) {
 
 ---
 
-## 5. Critical Android 11 Permissions & System Settings
+## 5. Map Presentation & HDMI Switching (Small & Full Map Modes)
+
+If OverDrive wishes to render a 3D vector map directly onto the instrument cluster (Small Mode `1` or Full Mode `3`), QNX requires explicit video routing commands in addition to setting system properties:
+
+### A. Requesting Map Focus (`DataType = 33`)
+Tells QNX to route Android's secondary HDMI display feed (`Display 1`) to the cluster LCD:
+```kotlin
+fun requestMapFocus(mapType: Int = 1): Boolean {
+    val bundle = Bundle().apply {
+        putInt("msgType", 3)
+        putInt("DataType", 33)
+        putInt("mapType", mapType)
+    }
+    return sendCommand(16, bundle)
+}
+```
+
+### B. Notifying Presentation Window State (`DataType = 31`)
+Controls the aperture and layout of the video window on the QNX compositor:
+```kotlin
+fun sendNaviPresentationState(mapType: Int = 1, state: Int): Boolean {
+    val bundle = Bundle().apply {
+        putInt("msgType", 3)
+        putInt("subtype", 15)
+        putInt("DataType", 31)
+        putInt("mapType", mapType)
+        putInt("naviPresentationState", state)
+    }
+    return sendCommand(16, bundle)
+}
+```
+**BYD Official State Values**:
+- `state = 5` (`MAP_STATE_SMALL_OPEN`): Center aperture between speedometer dials (Mode 1 / Piccolo).
+- `state = 6` (`MAP_STATE_FULL_OPEN`): Full-screen panoramic cluster view (Mode 3 / Grande).
+- `state = 7` (`MAP_STATE_SIMPLE_OPEN`): Simple vector TBT mode.
+- `state = 1` (`MAP_STATE_NAVI_CLOSE`): Navigation closed / standard OEM dials.
+
+### C. Releasing Video Focus (`DataType = 34`)
+```kotlin
+fun abandonMapFocus(mapType: Int = 1): Boolean {
+    val bundle = Bundle().apply {
+        putInt("msgType", 3)
+        putInt("DataType", 34)
+        putInt("mapType", mapType)
+    }
+    return sendCommand(16, bundle)
+}
+```
+
+---
+
+## 6. Critical Android 11 Permissions & System Settings
 
 To allow OverDrive to write cluster settings and receive navigation notifications without interruption:
 

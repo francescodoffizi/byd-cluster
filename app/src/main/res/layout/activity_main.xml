@@ -24,7 +24,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="v1.3.0 - Modalità Semplice Turn-by-Turn per Google Maps e ABRP"
+            android:text="v1.4.0 - Supporto Multi-Modale (Semplice, Piccolo, Grande)"
             android:textColor="@color/text_secondary"
             android:textSize="14sp" />
 
@@ -109,7 +109,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="Navigazione attiva: Nessuna (In attesa di Maps/ABRP)"
+                    android:text="Navigazione attiva: In attesa di Maps/ABRP"
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp" />
 
@@ -134,24 +134,48 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Controllo Quadro Strumenti (Modalità Semplice)"
+                    android:text="Selettore Modalità Quadro Strumenti"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp"
                     android:textStyle="bold" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="Invia esclusivamente frecce, metri e svolte TBT al cruscotto di fabbrica."
-                    android:textColor="@color/text_secondary"
-                    android:textSize="13sp" />
-
-                <!-- Action Buttons -->
+                <!-- Action Buttons: Row 1 (Mappe 3D) -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnModePiccolo"
+                        style="@style/Widget.MaterialComponents.Button"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="4dp"
+                        android:layout_weight="1"
+                        android:backgroundTint="#00B0FF"
+                        android:text="Mappa Piccolo"
+                        android:textColor="#000000"
+                        android:textSize="12sp" />
+
+                    <Button
+                        android:id="@+id/btnModeGrande"
+                        style="@style/Widget.MaterialComponents.Button"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:layout_weight="1"
+                        android:backgroundTint="#00E5FF"
+                        android:text="Mappa Grande"
+                        android:textColor="#000000"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <!-- Action Buttons: Row 2 (Semplice & Off) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
                     android:orientation="horizontal">
 
                     <Button
@@ -162,9 +186,9 @@
                         android:layout_marginEnd="4dp"
                         android:layout_weight="1"
                         android:backgroundTint="#00E676"
-                        android:text="Attiva TBT (Modo 2)"
+                        android:text="Solo Frecce (Semplice)"
                         android:textColor="#000000"
-                        android:textSize="13sp" />
+                        android:textSize="12sp" />
 
                     <Button
                         android:id="@+id/btnReleaseFocus"
@@ -173,10 +197,10 @@
                         android:layout_height="wrap_content"
                         android:layout_marginStart="4dp"
                         android:layout_weight="1"
-                        android:backgroundTint="#263238"
-                        android:text="Disattiva TBT"
+                        android:backgroundTint="#37474F"
+                        android:text="Disattiva (Off)"
                         android:textColor="@color/text_primary"
-                        android:textSize="13sp" />
+                        android:textSize="12sp" />
                 </LinearLayout>
 
                 <Button
@@ -184,7 +208,7 @@
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="14dp"
                     android:text="Simula Svolta Test (Tra 250m a Destra in Via Roma)"
                     android:textColor="@color/primary" />
 

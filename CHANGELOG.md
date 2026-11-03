@@ -4,6 +4,24 @@ Tutte le modifiche rilevanti a questo progetto saranno documentate in questo fil
 
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/).
 
+## [1.4.0] - 2026-11-03
+
+### Aggiunto & Architettura Completa (Reverse Engineering Neusoft DiLink)
+- **Supporto Ufficiale Multi-Modale (Semplice, Piccolo, Grande, Off)**:
+  - Completato il Reverse Engineering architetturale del pacchetto di fabbrica `com.neusoft.na.navigation` (`BydMapLauncher.apk`) e di `BYDAutoInstrumentDevice`.
+  - Mappati i comandi di commutazione video verso QNX (`ClusterCoreService` via IPC Binder):
+    - `requestMapFocus(1)` (`DataType: 33`): predispone e commuta il routing hardware del canale HDMI su Display 1.
+    - `abandonMapFocus(1)` (`DataType: 34`): rilascia il focus video e ripristina la grafica tachimetro nativa QNX.
+    - `sendNaviPresentationState(1, state)` (`DataType: 31`): comunica a QNX l'apertura della finestra centrale (`MAP_STATE_SMALL_OPEN = 5`) o full-screen (`MAP_STATE_FULL_OPEN = 6`) e la chiusura (`MAP_STATE_NAVI_CLOSE = 1`).
+- **ClusterPresentation In-Process Dedicata su Display 1**:
+  - Implementata `ClusterPresentation` su `Display 1` (HDMI 1920x720) isolata in-process.
+  - La visualizzazione di Google Maps / ABRP su Display 0 (tablet centrale) rimane **al 100% integra**, scongiurando il viewport detach e la divisione per zero.
+  - Rendering 3D vettoriale Dark Matter con rotazione automatica sulla rotta GPS dell'auto (`LocationManager`).
+- **UI Floating Pill Multi-Tasto**:
+  - Aggiunti 4 pulsanti rapidi touch: `[Piccolo]`, `[Grande]`, `[Semplice]`, `[Off]` con evidenziazione cromatica attiva.
+- **Aggiornamento Documentazione per Yash**:
+  - Aggiunta in `docs/YASH_OVERDRIVE_INTEGRATION_GUIDE.md` la specifica completa per `requestMapFocus`, `abandonMapFocus` e la tabella degli stati `MAP_STATE_*`.
+
 ## [1.3.0] - 2026-11-03
 
 ### Modificato & Ottimizzato (Focus Modalità Semplice / Turn-by-Turn Nativo)

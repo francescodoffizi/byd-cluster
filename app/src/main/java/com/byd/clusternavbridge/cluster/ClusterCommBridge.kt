@@ -12,14 +12,10 @@ import android.util.Log
 import com.byd.clusternavbridge.model.NavState
 
 /**
- * ClusterCommBridge v1.3.0 - Modalità Semplice (TBT Only)
+ * ClusterCommBridge v1.4.0 - Supporto Completo Multi-Modale (Semplice, Piccolo, Grande)
  *
- * Comunica nativamente con il quadro strumenti della BYD Sealion 7 tramite il servizio
- * di sistema DiLink com.ts.appservice.cluster.service.ClusterCoreService via IPC Binder.
- *
- * Invia esclusivamente le frecce di svolta (NaviIconTbt), la distanza (NaviNextRoadDistance)
- * e il nome della via (NaviNextRoadName) al quadro strumenti, lasciando la mappa 3D
- * sul display centrale senza interferire con Google Maps / ABRP né toccare il Display 1.
+ * Implementa l'IPC nativo DiLink verso com.ts.appservice.cluster.service.ClusterCoreService
+ * conforme al reverse engineering di Neusoft (BydMapLauncher) e BYDAutoInstrumentDevice.
  */
 class ClusterCommBridge(private val context: Context) {
 
@@ -29,15 +25,29 @@ class ClusterCommBridge(private val context: Context) {
         const val SETTING_NAVI_DISPLAY_MODE = "moet_extension_navi_display_mode"
         const val SETTING_NAVI_FOCUS_MAP = "moet_extension_navi_focus_map"
 
-        // Modalità Semplice: frecce e indicazioni sul quadro strumenti DiLink
-        const val MODE_SEMPLICE = 2
+        // Modalità Quadro Strumenti DiLink
         const val MODE_OFF = 0
+        const val MODE_PICCOLO = 1  // Mappa 3D nel riquadro centrale tra i quadranti
+        const val MODE_SEMPLICE = 2  // Indicatore sportivo frecce TBT vettoriali QNX
+        const val MODE_GRANDE = 3    // Mappa 3D a schermo intero panoramico
 
         const val CMD_NAVI = 16
 
         // Data types ufficiali da ClusterCommService / SomeIpClusterAdapter
         const val DATA_TYPE_NAVI_SWITCH = 15
         const val DATA_TYPE_NAVI_INFO = 16
+        const val DATA_TYPE_NAVI_PRESENTATION_STATE = 31
+        const val DATA_TYPE_REQUEST_MAP_FOCUS = 33
+        const val DATA_TYPE_ABANDON_MAP_FOCUS = 34
+
+        // Stati Mappa Presentation ufficiali QNX (BYDAutoInstrumentDevice)
+        const val MAP_STATE_NAVI_CLOSE = 1
+        const val MAP_STATE_SMALL_CLOSE = 2
+        const val MAP_STATE_FULL_CLOSE = 3
+        const val MAP_STATE_SIMPLE_CLOSE = 4
+        const val MAP_STATE_SMALL_OPEN = 5
+        const val MAP_STATE_FULL_OPEN = 6
+        const val MAP_STATE_SIMPLE_OPEN = 7
 
         private const val DESCRIPTOR = "com.ts.lib.cluster.common.IClusterCommService"
         private const val TRANSACTION_SEND_COMMAND = 1
@@ -46,6 +56,8 @@ class ClusterCommBridge(private val context: Context) {
     }
 
     private var directBinder: IBinder? = null
+    var currentMode: Int = MODE_OFF
+        private set
     private var isNavActive = false
     private var isBound = false
 
@@ -94,12 +106,96 @@ class ClusterCommBridge(private val context: Context) {
     }
 
     /**
-     * Attiva la modalità Semplice a quadro strumenti (TBT ON)
+     * Commuta la modalità del cruscotto eseguendo l'handshake completo con QNX
+     */
+    fun switchClusterMode(mode: Int): Boolean {
+        Log.i(TAG, "switchClusterMode -> from $currentMode to $mode")
+        currentMode = mode
+        when (mode) {
+            MODE_PICCOLO -> {
+                isNavActive = true
+                applyDisplayModeSettings(MODE_PICCOLO, focusMap = 1)
+                requestMapFocus(1)
+                sendNaviPresentationState(1, MAP_STATE_SMALL_OPEN)
+                startTbtMode()
+                return true
+            }
+            MODE_GRANDE -> {
+                isNavActive = true
+                applyDisplayModeSettings(MODE_GRANDE, focusMap = 1)
+                requestMapFocus(1)
+                sendNaviPresentationState(1, MAP_STATE_FULL_OPEN)
+                startTbtMode()
+                return true
+            }
+            MODE_SEMPLICE -> {
+                isNavActive = true
+                applyDisplayModeSettings(MODE_SEMPLICE, focusMap = 0)
+                abandonMapFocus(1)
+                sendNaviPresentationState(1, MAP_STATE_SIMPLE_OPEN)
+                startTbtMode()
+                return true
+            }
+            MODE_OFF -> {
+                isNavActive = false
+                applyDisplayModeSettings(MODE_OFF, focusMap = 0)
+                abandonMapFocus(1)
+                sendNaviPresentationState(1, MAP_STATE_NAVI_CLOSE)
+                stopTbtMode()
+                return true
+            }
+            else -> return false
+        }
+    }
+
+    /**
+     * Richiede a QNX di abilitare il routing del feed video Display 1 (HDMI)
+     */
+    fun requestMapFocus(mapType: Int = 1): Boolean {
+        val bundle = Bundle().apply {
+            putInt("msgType", 3)
+            putInt("DataType", DATA_TYPE_REQUEST_MAP_FOCUS)
+            putInt("mapType", mapType)
+        }
+        val sent = dispatchCommand(CMD_NAVI, bundle)
+        Log.i(TAG, "requestMapFocus(mapType=$mapType) dispatched -> $sent")
+        return sent
+    }
+
+    /**
+     * Rilascia il focus video HDMI e ripristina il feed strumenti nativo QNX
+     */
+    fun abandonMapFocus(mapType: Int = 1): Boolean {
+        val bundle = Bundle().apply {
+            putInt("msgType", 3)
+            putInt("DataType", DATA_TYPE_ABANDON_MAP_FOCUS)
+            putInt("mapType", mapType)
+        }
+        val sent = dispatchCommand(CMD_NAVI, bundle)
+        Log.i(TAG, "abandonMapFocus(mapType=$mapType) dispatched -> $sent")
+        return sent
+    }
+
+    /**
+     * Notifica a QNX lo stato della presentazione (Small, Full, Simple, Close)
+     */
+    fun sendNaviPresentationState(mapType: Int = 1, state: Int): Boolean {
+        val bundle = Bundle().apply {
+            putInt("msgType", 3)
+            putInt("subtype", 15)
+            putInt("DataType", DATA_TYPE_NAVI_PRESENTATION_STATE)
+            putInt("mapType", mapType)
+            putInt("naviPresentationState", state)
+        }
+        val sent = dispatchCommand(CMD_NAVI, bundle)
+        Log.i(TAG, "sendNaviPresentationState(mapType=$mapType, state=$state) dispatched -> $sent")
+        return sent
+    }
+
+    /**
+     * Attiva il canale TBT vettoriale a quadro strumenti
      */
     fun startTbtMode(): Boolean {
-        isNavActive = true
-        applyDisplayModeSettings(MODE_SEMPLICE)
-
         val bundle = Bundle().apply {
             putInt("DataType", DATA_TYPE_NAVI_SWITCH)
             putInt("NaviSource", 1) // 1: Local / AMAP compatible
@@ -115,7 +211,6 @@ class ClusterCommBridge(private val context: Context) {
      * Disattiva le frecce a quadro strumenti e ripristina la visualizzazione tachimetro
      */
     fun stopTbtMode(): Boolean {
-        isNavActive = false
         val bundle = Bundle().apply {
             putInt("DataType", DATA_TYPE_NAVI_SWITCH)
             putInt("NaviSource", 1)
@@ -190,20 +285,19 @@ class ClusterCommBridge(private val context: Context) {
         }
     }
 
-    private fun applyDisplayModeSettings(mode: Int) {
+    private fun applyDisplayModeSettings(mode: Int, focusMap: Int) {
         try {
             Settings.Global.putInt(
                 context.contentResolver,
                 SETTING_NAVI_DISPLAY_MODE,
                 mode
             )
-            // Assicuriamo che il focus map video HDMI rimanga disattivato (0)
             Settings.Global.putInt(
                 context.contentResolver,
                 SETTING_NAVI_FOCUS_MAP,
-                0
+                focusMap
             )
-            Log.i(TAG, "Settings.Global applied: display_mode=$mode, focus_map=0")
+            Log.i(TAG, "Settings.Global applied: display_mode=$mode, focus_map=$focusMap")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to apply Settings.Global: ${e.message}")
         }

@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
@@ -16,16 +17,20 @@ import com.byd.clusternavbridge.R
 import com.byd.clusternavbridge.cluster.ClusterCommBridge
 import com.byd.clusternavbridge.model.NavState
 import com.byd.clusternavbridge.power.VehiclePowerMonitor
+import com.byd.clusternavbridge.ui.ClusterPresentation
 import com.byd.clusternavbridge.ui.FloatingPillView
 import com.byd.clusternavbridge.ui.MainActivity
 
 /**
- * NavClusterService v1.3.0 - Modalità Semplice (TBT Only)
+ * NavClusterService v1.4.0
  *
- * Riceve gli eventi di svolta da Google Maps ReVanced e ABRP tramite NavNotificationListener
- * e li inoltra direttamente a ClusterCommBridge verso il quadro strumenti DiLink.
+ * Supporta in modo coordinato le 4 modalità del quadro strumenti DiLink 100:
+ * - MODE_OFF (0)      : Cruscotto standard tachimetro OEM
+ * - MODE_PICCOLO (1)  : Mappa 3D nel riquadro centrale + handshake Modo 5
+ * - MODE_SEMPLICE (2) : Indicatore sportivo frecce TBT vettoriali QNX (zero GPU)
+ * - MODE_GRANDE (3)   : Mappa 3D a pieno schermo panoramico + handshake Modo 6
  *
- * Completamente disaccoppiato da Display 1: non apre activity secondarie né display esterni.
+ * Mantiene Google Maps / ABRP intatti su Display 0 senza distacco né crash.
  */
 class NavClusterService : Service() {
 
@@ -39,6 +44,9 @@ class NavClusterService : Service() {
 
         const val ACTION_START = "com.byd.clusternavbridge.action.START"
         const val ACTION_STOP = "com.byd.clusternavbridge.action.STOP"
+        const val ACTION_SET_MODE = "com.byd.clusternavbridge.action.SET_MODE"
+        const val EXTRA_MODE = "extra_mode"
+
         const val ACTION_ENABLE_TBT = "com.byd.clusternavbridge.action.ENABLE_TBT"
         const val ACTION_DISABLE_TBT = "com.byd.clusternavbridge.action.DISABLE_TBT"
         const val ACTION_TEST_TBT = "com.byd.clusternavbridge.action.TEST_TBT"
@@ -58,55 +66,55 @@ class NavClusterService : Service() {
     private lateinit var clusterBridge: ClusterCommBridge
     private lateinit var powerMonitor: VehiclePowerMonitor
     private var floatingPill: FloatingPillView? = null
+    private var clusterPresentation: ClusterPresentation? = null
+
     var currentNavState: NavState = NavState()
         private set
 
-    private var tbtEnabledUser: Boolean = true
+    var currentMode: Int = ClusterCommBridge.MODE_SEMPLICE
+        private set
 
     override fun onCreate() {
         super.onCreate()
         instance = this
-        Log.i(TAG, "NavClusterService onCreate (v1.3.0 - Modalità Semplice)")
+        Log.i(TAG, "NavClusterService onCreate (v1.4.0 Multi-Modale)")
 
         clusterBridge = ClusterCommBridge(this)
 
-        // Monitor di alimentazione veicolo: spegne il TBT a cruscotto se l'auto è spenta (ACC OFF)
         powerMonitor = VehiclePowerMonitor(this) { isPowered ->
             Log.i(TAG, "Vehicle power state updated: isPowered=$isPowered")
             if (!isPowered) {
-                clusterBridge.stopTbtMode()
+                closeClusterPresentation()
+                clusterBridge.switchClusterMode(ClusterCommBridge.MODE_OFF)
                 floatingPill?.hide()
             } else {
                 initFloatingPill()
-                if (currentNavState.isActive && tbtEnabledUser) {
-                    clusterBridge.sendTbtInfo(currentNavState)
+                if (currentNavState.isActive) {
+                    setMode(currentMode)
                 }
             }
         }
         powerMonitor.start()
 
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildForegroundNotification("Servizio TBT attivo - Modalità Semplice"))
+        startForeground(NOTIFICATION_ID, buildForegroundNotification("Navigazione Cluster DiLink attiva"))
 
         initFloatingPill()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_SET_MODE -> {
+                val mode = intent.getIntExtra(EXTRA_MODE, ClusterCommBridge.MODE_SEMPLICE)
+                setMode(mode)
+            }
             ACTION_ENABLE_TBT -> {
-                tbtEnabledUser = true
-                if (currentNavState.isActive && powerMonitor.isPowered) {
-                    clusterBridge.sendTbtInfo(currentNavState)
-                } else {
-                    clusterBridge.startTbtMode()
-                }
+                setMode(ClusterCommBridge.MODE_SEMPLICE)
             }
             ACTION_DISABLE_TBT -> {
-                tbtEnabledUser = false
-                clusterBridge.stopTbtMode()
+                setMode(ClusterCommBridge.MODE_OFF)
             }
             ACTION_TEST_TBT -> {
-                tbtEnabledUser = true
                 val testState = NavState(
                     isActive = true,
                     sourcePackage = "com.google.android.apps.maps",
@@ -126,12 +134,94 @@ class NavClusterService : Service() {
         return START_STICKY
     }
 
+    fun setMode(mode: Int) {
+        Log.i(TAG, "Setting mode to $mode")
+        currentMode = mode
+        clusterBridge.switchClusterMode(mode)
+
+        when (mode) {
+            ClusterCommBridge.MODE_PICCOLO, ClusterCommBridge.MODE_GRANDE -> {
+                openClusterPresentation()
+            }
+            ClusterCommBridge.MODE_SEMPLICE, ClusterCommBridge.MODE_OFF -> {
+                closeClusterPresentation()
+            }
+        }
+
+        floatingPill?.updateMode(mode)
+        updateForegroundNotification(mode)
+    }
+
+    private fun openClusterPresentation() {
+        if (!powerMonitor.isPowered) {
+            Log.i(TAG, "Vehicle is OFF; presentation deferred")
+            return
+        }
+
+        if (clusterPresentation != null && clusterPresentation?.isShowing == true) {
+            clusterPresentation?.updateNavState(currentNavState)
+            return
+        }
+
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return
+        val presentationDisplays = dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)
+        val targetDisplay = if (presentationDisplays.isNotEmpty()) {
+            presentationDisplays[0]
+        } else {
+            dm.displays.firstOrNull { it.displayId == 1 }
+        }
+
+        if (targetDisplay != null) {
+            try {
+                clusterPresentation = ClusterPresentation(this, targetDisplay).apply {
+                    show()
+                    updateNavState(currentNavState)
+                }
+                Log.i(TAG, "ClusterPresentation opened on display ${targetDisplay.displayId} (${targetDisplay.name})")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to open ClusterPresentation on display", e)
+            }
+        } else {
+            Log.w(TAG, "No secondary display available for presentation")
+        }
+    }
+
+    private fun closeClusterPresentation() {
+        try {
+            clusterPresentation?.dismiss()
+            clusterPresentation?.cleanup()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error dismissing presentation: ${e.message}")
+        } finally {
+            clusterPresentation = null
+        }
+    }
+
+    fun onNavStateChanged(state: NavState) {
+        currentNavState = state
+        Log.i(TAG, "onNavStateChanged: active=${state.isActive}, mode=$currentMode, instr='${state.instruction}'")
+
+        if (state.isActive) {
+            if (currentMode == ClusterCommBridge.MODE_OFF) {
+                setMode(ClusterCommBridge.MODE_SEMPLICE)
+            } else {
+                clusterBridge.sendTbtInfo(state)
+                clusterPresentation?.updateNavState(state)
+            }
+        } else {
+            setMode(ClusterCommBridge.MODE_OFF)
+        }
+
+        floatingPill?.updateNavState(state)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         Log.i(TAG, "NavClusterService onDestroy")
         powerMonitor.stop()
+        closeClusterPresentation()
         floatingPill?.hide()
-        clusterBridge.stopTbtMode()
+        clusterBridge.switchClusterMode(ClusterCommBridge.MODE_OFF)
         instance = null
     }
 
@@ -146,17 +236,8 @@ class NavClusterService : Service() {
             if (floatingPill == null) {
                 floatingPill = FloatingPillView(
                     context = this,
-                    onTbtEnabled = { enabled ->
-                        tbtEnabledUser = enabled
-                        if (enabled) {
-                            if (currentNavState.isActive) {
-                                clusterBridge.sendTbtInfo(currentNavState)
-                            } else {
-                                clusterBridge.startTbtMode()
-                            }
-                        } else {
-                            clusterBridge.stopTbtMode()
-                        }
+                    onModeSelected = { mode ->
+                        setMode(mode)
                     }
                 )
             }
@@ -172,7 +253,7 @@ class NavClusterService : Service() {
             initFloatingPill()
             return true
         }
-        return if (floatingPill?.isShown() == true) {
+        return if (floatingPill?.isShowing == true) {
             floatingPill?.hide()
             false
         } else {
@@ -181,57 +262,47 @@ class NavClusterService : Service() {
         }
     }
 
-    fun onNavStateChanged(navState: NavState) {
-        currentNavState = navState
-        Log.i(TAG, "Nav state changed: active=${navState.isActive}, source=${navState.sourceName}, road='${navState.instruction}', dist='${navState.distance}'")
-
-        floatingPill?.updateStatus(navState.isActive, navState.sourceName)
-
-        if (navState.isActive && powerMonitor.isPowered && tbtEnabledUser) {
-            clusterBridge.sendTbtInfo(navState)
-            updateNotification("${navState.sourceName}: ${navState.distance} ${navState.instruction}")
-        } else if (!navState.isActive) {
-            clusterBridge.stopTbtMode()
-            updateNotification("Servizio TBT attivo in attesa di navigazione")
-        }
-    }
-
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                getString(R.string.notification_channel_name),
+                "BYD Cluster Navigation",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = getString(R.string.notification_channel_desc)
+                description = "Notifiche cluster quadro strumenti BYD"
                 setShowBadge(false)
             }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(channel)
+            val nm = getSystemService(NotificationManager::class.java)
+            nm?.createNotificationChannel(channel)
         }
     }
 
     private fun buildForegroundNotification(contentText: String): Notification {
-        val launchIntent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
-            launchIntent,
+            Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("BYD Cluster Nav Bridge (Semplice)")
+            .setContentTitle("BYD Cluster Nav Bridge v1.4.0")
             .setContentText(contentText)
-            .setSmallIcon(R.drawable.ic_stat_nav)
-            .setOngoing(true)
+            .setSmallIcon(R.drawable.ic_navigation)
             .setContentIntent(pendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .setSilent(true)
             .build()
     }
 
-    private fun updateNotification(text: String) {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildForegroundNotification(text))
+    private fun updateForegroundNotification(mode: Int) {
+        val text = when (mode) {
+            ClusterCommBridge.MODE_PICCOLO -> "Attivo: Mappa 3D Piccolo"
+            ClusterCommBridge.MODE_GRANDE -> "Attivo: Mappa 3D Full-Screen"
+            ClusterCommBridge.MODE_SEMPLICE -> "Attivo: Frecce TBT Semplice"
+            else -> "Standby (Tachimetro OEM)"
+        }
+        val nm = getSystemService(NotificationManager::class.java)
+        nm?.notify(NOTIFICATION_ID, buildForegroundNotification(text))
     }
 }

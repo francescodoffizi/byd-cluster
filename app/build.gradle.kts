@@ -11,8 +11,8 @@ android {
         applicationId = "com.byd.clusternavbridge"
         minSdk = 29
         targetSdk = 30
-        versionCode = 4
-        versionName = "1.3.0"
+        versionCode = 5
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -64,4 +64,5 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
+    implementation("org.maplibre.gl:android-sdk:11.5.0")
 }

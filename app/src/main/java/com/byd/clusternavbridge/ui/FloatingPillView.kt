@@ -12,17 +12,20 @@ import android.view.WindowManager
 import android.widget.TextView
 import com.byd.clusternavbridge.R
 import com.byd.clusternavbridge.cluster.ClusterCommBridge
+import com.byd.clusternavbridge.model.NavState
 import kotlin.math.abs
 
 class FloatingPillView(
     private val context: Context,
-    private val onTbtEnabled: (Boolean) -> Unit
+    private val onModeSelected: (Int) -> Unit
 ) {
 
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var pillView: View? = null
-    private var isShowing = false
-    private var isTbtActive = true
+    var isShowing = false
+        private set
+
+    private var currentMode = ClusterCommBridge.MODE_SEMPLICE
 
     private var initialX = 0
     private var initialY = 0
@@ -30,6 +33,8 @@ class FloatingPillView(
     private var initialTouchY = 0f
 
     private var tvStatus: TextView? = null
+    private var btnPiccolo: TextView? = null
+    private var btnGrande: TextView? = null
     private var btnSemplice: TextView? = null
     private var btnOff: TextView? = null
 
@@ -53,31 +58,32 @@ class FloatingPillView(
         val view = inflater.inflate(R.layout.layout_floating_pill, null)
 
         tvStatus = view.findViewById(R.id.tvPillStatus)
-        val btnPiccolo: TextView? = view.findViewById(R.id.btnPillPiccolo)
-        val btnGrande: TextView? = view.findViewById(R.id.btnPillGrande)
+        btnPiccolo = view.findViewById(R.id.btnPillPiccolo)
+        btnGrande = view.findViewById(R.id.btnPillGrande)
         btnSemplice = view.findViewById(R.id.btnPillSemplice)
         btnOff = view.findViewById(R.id.btnPillOff)
 
-        // Nascondiamo le modalità Piccolo e Grande (mappe rimosse)
-        btnPiccolo?.visibility = View.GONE
-        btnGrande?.visibility = View.GONE
-
-        btnSemplice?.text = "Semplice"
+        btnPiccolo?.visibility = View.VISIBLE
+        btnGrande?.visibility = View.VISIBLE
         btnSemplice?.visibility = View.VISIBLE
         btnOff?.visibility = View.VISIBLE
 
         updateButtonStates()
 
+        btnPiccolo?.setOnClickListener {
+            onModeSelected(ClusterCommBridge.MODE_PICCOLO)
+        }
+
+        btnGrande?.setOnClickListener {
+            onModeSelected(ClusterCommBridge.MODE_GRANDE)
+        }
+
         btnSemplice?.setOnClickListener {
-            isTbtActive = true
-            updateButtonStates()
-            onTbtEnabled(true)
+            onModeSelected(ClusterCommBridge.MODE_SEMPLICE)
         }
 
         btnOff?.setOnClickListener {
-            isTbtActive = false
-            updateButtonStates()
-            onTbtEnabled(false)
+            onModeSelected(ClusterCommBridge.MODE_OFF)
         }
 
         view.setOnTouchListener { _, event ->
@@ -98,9 +104,8 @@ class FloatingPillView(
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    val deltaX = abs(event.rawX - initialTouchX)
-                    val deltaY = abs(event.rawY - initialTouchY)
-                    if (deltaX < 10 && deltaY < 10) {
+                    val moved = abs(event.rawX - initialTouchX) > 10 || abs(event.rawY - initialTouchY) > 10
+                    if (!moved) {
                         view.performClick()
                     }
                     true
@@ -109,43 +114,46 @@ class FloatingPillView(
             }
         }
 
-        try {
-            windowManager.addView(view, layoutParams)
-            pillView = view
-            isShowing = true
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        windowManager.addView(view, layoutParams)
+        pillView = view
+        isShowing = true
     }
 
     fun hide() {
         if (!isShowing) return
-        try {
-            pillView?.let { windowManager.removeView(it) }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        } finally {
-            pillView = null
-            isShowing = false
+        pillView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (_: Exception) {}
         }
+        pillView = null
+        isShowing = false
     }
 
-    fun isShown(): Boolean = isShowing
-
-    fun updateStatus(isActive: Boolean, appName: String) {
-        tvStatus?.post {
-            if (isActive) {
-                tvStatus?.text = "● $appName"
-                tvStatus?.setTextColor(Color.parseColor("#00E676"))
-            } else {
-                tvStatus?.text = "○ Nav"
-                tvStatus?.setTextColor(Color.parseColor("#B0BEC5"))
-            }
-        }
+    fun updateMode(mode: Int) {
+        currentMode = mode
+        updateButtonStates()
     }
 
     private fun updateButtonStates() {
-        btnSemplice?.setTextColor(if (isTbtActive) Color.parseColor("#00E676") else Color.parseColor("#B0BEC5"))
-        btnOff?.setTextColor(if (!isTbtActive) Color.parseColor("#FF5252") else Color.parseColor("#B0BEC5"))
+        btnPiccolo?.setBackgroundColor(if (currentMode == ClusterCommBridge.MODE_PICCOLO) Color.parseColor("#00E5FF") else Color.parseColor("#223344"))
+        btnPiccolo?.setTextColor(if (currentMode == ClusterCommBridge.MODE_PICCOLO) Color.BLACK else Color.WHITE)
+
+        btnGrande?.setBackgroundColor(if (currentMode == ClusterCommBridge.MODE_GRANDE) Color.parseColor("#00E5FF") else Color.parseColor("#223344"))
+        btnGrande?.setTextColor(if (currentMode == ClusterCommBridge.MODE_GRANDE) Color.BLACK else Color.WHITE)
+
+        btnSemplice?.setBackgroundColor(if (currentMode == ClusterCommBridge.MODE_SEMPLICE) Color.parseColor("#00E676") else Color.parseColor("#223344"))
+        btnSemplice?.setTextColor(if (currentMode == ClusterCommBridge.MODE_SEMPLICE) Color.BLACK else Color.WHITE)
+
+        btnOff?.setBackgroundColor(if (currentMode == ClusterCommBridge.MODE_OFF) Color.parseColor("#FF5252") else Color.parseColor("#223344"))
+        btnOff?.setTextColor(if (currentMode == ClusterCommBridge.MODE_OFF) Color.WHITE else Color.parseColor("#B0BEC5"))
+    }
+
+    fun updateNavState(state: NavState) {
+        tvStatus?.text = if (state.isActive) {
+            if (state.distance.isNotEmpty()) "${state.sourceName.take(4)} • ${state.distance}" else state.sourceName
+        } else {
+            "Standby"
+        }
     }
 }
