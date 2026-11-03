@@ -51,7 +51,7 @@ class NavClusterService : Service() {
     var currentNavState: NavState = NavState()
         private set
 
-    private var preferredMode: Int = ClusterCommBridge.MODE_MINI_MAP
+    private var preferredMode: Int = ClusterCommBridge.MODE_PICCOLO
     private var manualOverride: Boolean = false
 
     override fun onCreate() {
@@ -70,7 +70,7 @@ class NavClusterService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_SET_MODE -> {
-                val mode = intent.getIntExtra(EXTRA_MODE, ClusterCommBridge.MODE_MINI_MAP)
+                val mode = intent.getIntExtra(EXTRA_MODE, ClusterCommBridge.MODE_PICCOLO)
                 setClusterMode(mode, manual = true)
             }
             ACTION_RELEASE_FOCUS -> {
@@ -129,7 +129,9 @@ class NavClusterService : Service() {
         preferredMode = mode
         clusterBridge.setDisplayMode(mode)
         clusterBridge.setFocus(true)
-        clusterBridge.updatePresentation(currentNavState)
+        if (currentNavState.isActive) {
+            clusterBridge.sendTbtInfo(currentNavState)
+        }
     }
 
     fun releaseClusterFocus(manual: Boolean) {
@@ -149,7 +151,7 @@ class NavClusterService : Service() {
             // Auto-publish to cluster
             clusterBridge.setDisplayMode(preferredMode)
             clusterBridge.setFocus(true)
-            clusterBridge.updatePresentation(navState)
+            clusterBridge.sendTbtInfo(navState)
             updateNotification("Navigazione attiva da ${navState.sourceName}: ${navState.distance} ${navState.instruction}")
         } else {
             // Navigation stopped

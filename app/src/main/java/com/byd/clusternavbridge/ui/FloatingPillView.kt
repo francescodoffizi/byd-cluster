@@ -30,8 +30,9 @@ class FloatingPillView(
     private var initialTouchY = 0f
 
     private var tvStatus: TextView? = null
-    private var btnMini: TextView? = null
-    private var btnFull: TextView? = null
+    private var btnPiccolo: TextView? = null
+    private var btnGrande: TextView? = null
+    private var btnSemplice: TextView? = null
     private var btnOff: TextView? = null
 
     @SuppressLint("ClickableViewAccessibility")
@@ -54,22 +55,28 @@ class FloatingPillView(
         val view = inflater.inflate(R.layout.layout_floating_pill, null)
 
         tvStatus = view.findViewById(R.id.tvPillStatus)
-        btnMini = view.findViewById(R.id.btnPillMini)
-        btnFull = view.findViewById(R.id.btnPillFull)
+        btnPiccolo = view.findViewById(R.id.btnPillPiccolo)
+        btnGrande = view.findViewById(R.id.btnPillGrande)
+        btnSemplice = view.findViewById(R.id.btnPillSemplice)
         btnOff = view.findViewById(R.id.btnPillOff)
 
-        btnMini?.setOnClickListener {
-            highlightButton(ClusterCommBridge.MODE_MINI_MAP)
-            onModeSelected(ClusterCommBridge.MODE_MINI_MAP)
+        btnPiccolo?.setOnClickListener {
+            highlightButton(ClusterCommBridge.MODE_PICCOLO)
+            onModeSelected(ClusterCommBridge.MODE_PICCOLO)
         }
 
-        btnFull?.setOnClickListener {
-            highlightButton(ClusterCommBridge.MODE_FULLSCREEN_MAP)
-            onModeSelected(ClusterCommBridge.MODE_FULLSCREEN_MAP)
+        btnGrande?.setOnClickListener {
+            highlightButton(ClusterCommBridge.MODE_GRANDE)
+            onModeSelected(ClusterCommBridge.MODE_GRANDE)
+        }
+
+        btnSemplice?.setOnClickListener {
+            highlightButton(ClusterCommBridge.MODE_SEMPLICE)
+            onModeSelected(ClusterCommBridge.MODE_SEMPLICE)
         }
 
         btnOff?.setOnClickListener {
-            highlightButton(ClusterCommBridge.MODE_DEFAULT)
+            highlightButton(ClusterCommBridge.MODE_OFF)
             onReleaseFocus()
         }
 
@@ -138,7 +145,8 @@ class FloatingPillView(
     }
 
     private fun highlightButton(mode: Int) {
-        btnMini?.setTextColor(if (mode == ClusterCommBridge.MODE_MINI_MAP) Color.parseColor("#00E676") else Color.WHITE)
-        btnFull?.setTextColor(if (mode == ClusterCommBridge.MODE_FULLSCREEN_MAP) Color.parseColor("#00E676") else Color.parseColor("#00B0FF"))
+        btnPiccolo?.setTextColor(if (mode == ClusterCommBridge.MODE_PICCOLO) Color.parseColor("#00E676") else Color.WHITE)
+        btnGrande?.setTextColor(if (mode == ClusterCommBridge.MODE_GRANDE) Color.parseColor("#00E676") else Color.parseColor("#00B0FF"))
+        btnSemplice?.setTextColor(if (mode == ClusterCommBridge.MODE_SEMPLICE) Color.parseColor("#00E676") else Color.parseColor("#B0BEC5"))
     }
 }

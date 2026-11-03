@@ -20,8 +20,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvNavState: TextView
     private lateinit var btnGrantOverlay: Button
     private lateinit var btnGrantNotification: Button
-    private lateinit var btnMiniMap: Button
-    private lateinit var btnFullScreenMap: Button
+    private lateinit var btnModePiccolo: Button
+    private lateinit var btnModeGrande: Button
+    private lateinit var btnModeSemplice: Button
     private lateinit var btnReleaseFocus: Button
     private lateinit var btnToggleFloatingPill: Button
 
@@ -34,8 +35,9 @@ class MainActivity : AppCompatActivity() {
         tvNavState = findViewById(R.id.tvNavState)
         btnGrantOverlay = findViewById(R.id.btnGrantOverlay)
         btnGrantNotification = findViewById(R.id.btnGrantNotification)
-        btnMiniMap = findViewById(R.id.btnMiniMap)
-        btnFullScreenMap = findViewById(R.id.btnFullScreenMap)
+        btnModePiccolo = findViewById(R.id.btnModePiccolo)
+        btnModeGrande = findViewById(R.id.btnModeGrande)
+        btnModeSemplice = findViewById(R.id.btnModeSemplice)
         btnReleaseFocus = findViewById(R.id.btnReleaseFocus)
         btnToggleFloatingPill = findViewById(R.id.btnToggleFloatingPill)
 
@@ -52,12 +54,16 @@ class MainActivity : AppCompatActivity() {
             startActivity(intent)
         }
 
-        btnMiniMap.setOnClickListener {
-            NavClusterService.instance?.setClusterMode(ClusterCommBridge.MODE_MINI_MAP, manual = true)
+        btnModePiccolo.setOnClickListener {
+            NavClusterService.instance?.setClusterMode(ClusterCommBridge.MODE_PICCOLO, manual = true)
         }
 
-        btnFullScreenMap.setOnClickListener {
-            NavClusterService.instance?.setClusterMode(ClusterCommBridge.MODE_FULLSCREEN_MAP, manual = true)
+        btnModeGrande.setOnClickListener {
+            NavClusterService.instance?.setClusterMode(ClusterCommBridge.MODE_GRANDE, manual = true)
+        }
+
+        btnModeSemplice.setOnClickListener {
+            NavClusterService.instance?.setClusterMode(ClusterCommBridge.MODE_SEMPLICE, manual = true)
         }
 
         btnReleaseFocus.setOnClickListener {

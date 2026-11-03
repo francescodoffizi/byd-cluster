@@ -24,7 +24,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Bridge automatico per Google Maps e ABRP su quadro strumenti BYD"
+            android:text="Bridge SOME/IP vettoriale per Google Maps e ABRP su cluster BYD"
             android:textColor="@color/text_secondary"
             android:textSize="14sp" />
 
@@ -134,7 +134,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Controllo Manuale Quadro Strumenti"
+                    android:text="Modalità Schermo Quadro Strumenti"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -143,10 +143,11 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="Puoi forzare la modalità del cluster o testare l'output HDMI"
+                    android:text="Seleziona la modalità visuale nativa sul display del cruscotto"
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp" />
 
+                <!-- Grid of 3 modes -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -154,28 +155,41 @@
                     android:orientation="horizontal">
 
                     <Button
-                        android:id="@+id/btnMiniMap"
+                        android:id="@+id/btnModePiccolo"
                         style="@style/Widget.MaterialComponents.Button"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_marginEnd="6dp"
+                        android:layout_marginEnd="4dp"
                         android:layout_weight="1"
                         android:backgroundTint="#263238"
-                        android:text="Mini-Mappa (Modo 2)"
+                        android:text="Piccolo (Modo 1)"
                         android:textColor="@color/text_primary"
-                        android:textSize="12sp" />
+                        android:textSize="11sp" />
 
                     <Button
-                        android:id="@+id/btnFullScreenMap"
+                        android:id="@+id/btnModeGrande"
                         style="@style/Widget.MaterialComponents.Button"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="6dp"
+                        android:layout_marginEnd="4dp"
+                        android:layout_marginStart="4dp"
                         android:layout_weight="1"
                         android:backgroundTint="#00B0FF"
-                        android:text="A Tutto Schermo (Modo 3)"
+                        android:text="Grande (Modo 3)"
                         android:textColor="#000000"
-                        android:textSize="12sp" />
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/btnModeSemplice"
+                        style="@style/Widget.MaterialComponents.Button"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:layout_weight="1"
+                        android:backgroundTint="#37474F"
+                        android:text="Semplice (Modo 2)"
+                        android:textColor="@color/text_primary"
+                        android:textSize="11sp" />
                 </LinearLayout>
 
                 <Button
@@ -183,10 +197,10 @@
                     style="@style/Widget.MaterialComponents.Button"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:backgroundTint="#37474F"
-                    android:text="Rilascia Focus (Torna ai Cruscotti OEM)"
-                    android:textColor="@color/text_primary" />
+                    android:layout_marginTop="10dp"
+                    android:backgroundTint="#1E2830"
+                    android:text="Rilascia Focus (Torna ai Cruscotti OEM - Modo 0)"
+                    android:textColor="@color/status_red" />
 
                 <Button
                     android:id="@+id/btnToggleFloatingPill"
