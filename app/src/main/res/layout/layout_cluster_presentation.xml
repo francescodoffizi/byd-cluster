@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Container designed for 1920x720 HDMI secondary display -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp">
+
+        <!-- Header: Source App Badge -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_pill_button"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="6dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_navigation"
+                android:tint="@color/primary"
+                android:contentDescription="Nav Source" />
+
+            <TextView
+                android:id="@+id/tvPresSourceApp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="GOOGLE MAPS"
+                android:textColor="@color/primary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Main Turn Direction Info -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/ivPresManeuver"
+                android:layout_width="96dp"
+                android:layout_height="96dp"
+                android:src="@drawable/ic_navigation"
+                android:tint="#00E676"
+                android:contentDescription="Maneuver Icon" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="24dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvPresDistance"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="350 m"
+                    android:textColor="#FFFFFF"
+                    android:textSize="48sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvPresInstruction"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:maxWidth="800dp"
+                    android:text="Prosegui dritto"
+                    android:textColor="#ECEFF1"
+                    android:textSize="28sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Trip Summary Bar (ETA, Distance remaining) -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:background="#141A20"
+            android:orientation="horizontal"
+            android:paddingStart="24dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="24dp"
+            android:paddingBottom="10dp">
+
+            <TextView
+                android:id="@+id/tvPresEta"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Arrivo 18:30"
+                android:textColor="#00E676"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvPresRemaining"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="24dp"
+                android:text="•  12 km  •  18 min"
+                android:textColor="#B0BEC5"
+                android:textSize="20sp" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+</FrameLayout>

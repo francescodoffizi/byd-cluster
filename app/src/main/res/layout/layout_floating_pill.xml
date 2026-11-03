@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/pillRoot"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_floating_pill"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="12dp"
+    android:paddingTop="6dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="6dp">
+
+    <!-- Handle & Icon -->
+    <ImageView
+        android:id="@+id/ivPillDragHandle"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:src="@drawable/ic_navigation"
+        android:contentDescription="Drag handle" />
+
+    <!-- Status dot / Label -->
+    <TextView
+        android:id="@+id/tvPillStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:layout_marginEnd="10dp"
+        android:text="Nav"
+        android:textColor="@color/text_primary"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+
+    <!-- Button Mini-Map (Mode 2) -->
+    <TextView
+        android:id="@+id/btnPillMini"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:layout_marginEnd="6dp"
+        android:background="@drawable/bg_pill_button"
+        android:gravity="center"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:text="Mini"
+        android:textColor="@color/text_primary"
+        android:textSize="12sp" />
+
+    <!-- Button Fullscreen (Mode 3) -->
+    <TextView
+        android:id="@+id/btnPillFull"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:layout_marginEnd="6dp"
+        android:background="@drawable/bg_pill_button"
+        android:gravity="center"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:text="Full"
+        android:textColor="#00B0FF"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+    <!-- Button Close / Release Focus (Mode 0) -->
+    <TextView
+        android:id="@+id/btnPillOff"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:background="@drawable/bg_pill_button"
+        android:gravity="center"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:text="Off"
+        android:textColor="@color/status_red"
+        android:textSize="12sp" />
+
+</LinearLayout>
