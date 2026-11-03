@@ -202,7 +202,7 @@ class ClusterCommBridge(private val context: Context) {
         }
     }
 
-    private fun mapInstructionToIcon(instr: String): Int {
+    fun mapInstructionToIcon(instr: String): Int {
         val lower = instr.lowercase()
         return when {
             lower.contains("destra") || lower.contains("right") -> 3

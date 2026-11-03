@@ -1,5 +1,6 @@
 package com.byd.clusternavbridge.service
 
+import android.app.ActivityOptions
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
@@ -15,6 +17,8 @@ import androidx.core.app.NotificationCompat
 import com.byd.clusternavbridge.R
 import com.byd.clusternavbridge.cluster.ClusterCommBridge
 import com.byd.clusternavbridge.model.NavState
+import com.byd.clusternavbridge.power.VehiclePowerMonitor
+import com.byd.clusternavbridge.ui.ClusterMapActivity
 import com.byd.clusternavbridge.ui.FloatingPillView
 import com.byd.clusternavbridge.ui.MainActivity
 
@@ -47,11 +51,12 @@ class NavClusterService : Service() {
     }
 
     private lateinit var clusterBridge: ClusterCommBridge
+    private lateinit var powerMonitor: VehiclePowerMonitor
     private var floatingPill: FloatingPillView? = null
     var currentNavState: NavState = NavState()
         private set
 
-    private var preferredMode: Int = ClusterCommBridge.MODE_PICCOLO
+    private var preferredMode: Int = ClusterCommBridge.MODE_GRANDE
     private var manualOverride: Boolean = false
 
     override fun onCreate() {
@@ -60,6 +65,23 @@ class NavClusterService : Service() {
         Log.i(TAG, "NavClusterService onCreate")
 
         clusterBridge = ClusterCommBridge(this)
+
+        // Setup Power Monitor: strictly shut down cluster map when vehicle is OFF
+        powerMonitor = VehiclePowerMonitor(this) { isPowered ->
+            Log.i(TAG, "Vehicle power state updated: isPowered=$isPowered")
+            if (!isPowered) {
+                closeClusterMap()
+                releaseClusterFocus(manual = false)
+                floatingPill?.hide()
+            } else {
+                initFloatingPill()
+                if (currentNavState.isActive) {
+                    launchClusterMapOnDisplay1()
+                    setClusterMode(preferredMode, manual = false)
+                }
+            }
+        }
+        powerMonitor.start()
 
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildForegroundNotification("Servizio attivo in attesa di navigazione"))
@@ -70,14 +92,14 @@ class NavClusterService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_SET_MODE -> {
-                val mode = intent.getIntExtra(EXTRA_MODE, ClusterCommBridge.MODE_PICCOLO)
+                val mode = intent.getIntExtra(EXTRA_MODE, ClusterCommBridge.MODE_GRANDE)
                 setClusterMode(mode, manual = true)
             }
             ACTION_RELEASE_FOCUS -> {
                 releaseClusterFocus(manual = true)
             }
             ACTION_STOP -> {
-                stopForeground(true)
+                stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
         }
@@ -87,6 +109,8 @@ class NavClusterService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.i(TAG, "NavClusterService onDestroy")
+        powerMonitor.stop()
+        closeClusterMap()
         floatingPill?.hide()
         clusterBridge.setFocus(false)
         instance = null
@@ -95,12 +119,18 @@ class NavClusterService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun initFloatingPill() {
+        if (!powerMonitor.isPowered) {
+            Log.i(TAG, "Vehicle is OFF; floating pill deferred")
+            return
+        }
         if (Settings.canDrawOverlays(this)) {
-            floatingPill = FloatingPillView(
-                context = this,
-                onModeSelected = { mode -> setClusterMode(mode, manual = true) },
-                onReleaseFocus = { releaseClusterFocus(manual = true) }
-            )
+            if (floatingPill == null) {
+                floatingPill = FloatingPillView(
+                    context = this,
+                    onModeSelected = { mode -> setClusterMode(mode, manual = true) },
+                    onReleaseFocus = { releaseClusterFocus(manual = true) }
+                )
+            }
             floatingPill?.show()
         } else {
             Log.w(TAG, "Overlay permission not granted; floating pill deferred")
@@ -122,15 +152,61 @@ class NavClusterService : Service() {
         }
     }
 
+    fun launchClusterMapOnDisplay1() {
+        if (!powerMonitor.isPowered) {
+            Log.w(TAG, "Vehicle is OFF; cluster map launch blocked")
+            return
+        }
+        val displayManager = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return
+        val displays = displayManager.displays
+        val targetDisplay = displays.find { it.displayId == 1 }
+            ?: displays.firstOrNull { it.name.contains("HDMI", ignoreCase = true) }
+
+        if (targetDisplay != null) {
+            Log.i(TAG, "Launching ClusterMapActivity on Display ${targetDisplay.displayId} (${targetDisplay.name})")
+            val intent = Intent(this, ClusterMapActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+            }
+            val options = ActivityOptions.makeBasic().apply {
+                launchDisplayId = targetDisplay.displayId
+            }
+            try {
+                startActivity(intent, options.toBundle())
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to launch ClusterMapActivity on Display 1", e)
+            }
+        } else {
+            Log.w(TAG, "Display 1 (HDMI) not detected")
+        }
+    }
+
+    fun closeClusterMap() {
+        try {
+            sendBroadcast(Intent(ClusterMapActivity.ACTION_CLOSE_CLUSTER_MAP))
+        } catch (e: Exception) {
+            Log.w(TAG, "Error broadcasting close cluster map", e)
+        }
+    }
+
     fun setClusterMode(mode: Int, manual: Boolean) {
+        if (!powerMonitor.isPowered && mode != ClusterCommBridge.MODE_OFF) {
+            Log.w(TAG, "Vehicle is OFF; refusing cluster mode $mode")
+            return
+        }
         if (manual) {
             manualOverride = true
         }
         preferredMode = mode
         clusterBridge.setDisplayMode(mode)
-        clusterBridge.setFocus(true)
-        if (currentNavState.isActive) {
-            clusterBridge.sendTbtInfo(currentNavState)
+        clusterBridge.setFocus(mode != ClusterCommBridge.MODE_OFF)
+
+        if (mode != ClusterCommBridge.MODE_OFF) {
+            launchClusterMapOnDisplay1()
+            if (currentNavState.isActive) {
+                clusterBridge.sendTbtInfo(currentNavState)
+            }
+        } else {
+            closeClusterMap()
         }
     }
 
@@ -139,6 +215,7 @@ class NavClusterService : Service() {
             manualOverride = false
         }
         clusterBridge.setFocus(false)
+        closeClusterMap()
     }
 
     fun onNavStateChanged(navState: NavState) {
@@ -147,16 +224,30 @@ class NavClusterService : Service() {
 
         floatingPill?.updateStatus(navState.isActive, navState.sourceName)
 
-        if (navState.isActive) {
+        if (navState.isActive && powerMonitor.isPowered) {
             // Auto-publish to cluster
             clusterBridge.setDisplayMode(preferredMode)
             clusterBridge.setFocus(true)
             clusterBridge.sendTbtInfo(navState)
+            launchClusterMapOnDisplay1()
+
+            // Send real-time HUD data to ClusterMapActivity
+            val iconId = clusterBridge.mapInstructionToIcon(navState.instruction)
+            val updateIntent = Intent(ClusterMapActivity.ACTION_UPDATE_NAV_DATA).apply {
+                putExtra(ClusterMapActivity.EXTRA_STREET, navState.instruction)
+                putExtra(ClusterMapActivity.EXTRA_DISTANCE, navState.distance)
+                putExtra(ClusterMapActivity.EXTRA_ICON_ID, iconId)
+                putExtra(ClusterMapActivity.EXTRA_ETA, navState.eta)
+                putExtra(ClusterMapActivity.EXTRA_REMAINING_DIST, navState.remainingTimeDistance)
+            }
+            sendBroadcast(updateIntent)
+
             updateNotification("Navigazione attiva da ${navState.sourceName}: ${navState.distance} ${navState.instruction}")
-        } else {
+        } else if (!navState.isActive) {
             // Navigation stopped
             if (!manualOverride) {
                 clusterBridge.setFocus(false)
+                closeClusterMap()
             }
             updateNotification("Servizio attivo in attesa di navigazione")
         }
