@@ -4,6 +4,27 @@ Tutte le modifiche rilevanti a questo progetto saranno documentate in questo fil
 
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/).
 
+## [1.3.0] - 2026-11-03
+
+### Modificato & Ottimizzato (Focus Modalità Semplice / Turn-by-Turn Nativo)
+- **Modalità Semplice Esclusiva (Zero Display 1, Zero Crash GPU)**:
+  - Rimosso qualsiasi tentativo di mirroring dello schermo secondario (Display 1 HDMI) o avvio di activity esterne, eliminando alla radice i crash di divisione per zero in Google Maps ReVanced (`NavInternal ArithmeticException`) dovuti al distacco della viewport 0x0 su Display 0.
+  - Rimossa dipendenza pesante MapLibre SDK dal bundle APK (ridotta impronta da ~70MB a <10MB).
+  - La visualizzazione della mappa di navigazione 3D rimane attiva e interattiva esclusivamente sullo schermo centrale tablet (Display 0).
+- **Integrazione Binder Nativa DiLink (`ClusterCoreService`)**:
+  - Implementato client IPC diretto verso `com.ts.appservice.cluster.service.ClusterCoreService` (AIDL `com.ts.lib.cluster.common.IClusterCommService`, `TRANSACTION_sendCommand = 1`, `CMD_NAVI = 16`).
+  - Sequenza di comando Turn-by-Turn nativa DiLink:
+    - Attivazione TBT: `DataType: 15`, `NaviSource: 1`, `NaviTbtSwitch: 1`, `NaviState: 2`.
+    - Invio manovra TBT: `DataType: 16`, `NaviSource: 1`, `NaviIconTbt: <id>`, `NaviNextRoadDistance: <metri>`, `NaviNextRoadName: <nome>`, `NaviToDestTime: <secondi>`, `NaviDistanceToDest: <metri>`, `NaviState: 2`.
+    - Disattivazione TBT: `DataType: 15`, `NaviSource: 1`, `NaviTbtSwitch: 0`, `NaviState: 0`.
+  - Configurazione display mode: `Settings.Global.putInt("moet_extension_navi_display_mode", 2)` e `Settings.Global.putInt("moet_extension_navi_focus_map", 0)`.
+- **Risoluzione Blocco Notifiche su Android 11 Automotive**:
+  - Risolto il mancato inoltro delle notifiche di navigazione a `NavNotificationListener`: abilitato il servizio nel setting protetto di sistema `Settings.Secure.enabled_notification_listeners` preservando l'ascoltatore di OverDrive.
+  - Concesso `android.permission.WRITE_SECURE_SETTINGS` per permettere la scrittura di `moet_extension_navi_display_mode`.
+- **UI di Controllo Snella**:
+  - Floating Pill ridisegnata: pulsante compatto toggle TBT `[TBT ON / TBT OFF]` con stato cromatico e indicatore sorgente navigazione.
+  - Aggiunto comando e intent `com.byd.clusternavbridge.action.TEST_TBT` per test di simulazione svolta a quadro strumenti senza toccare lo schermo.
+
 ## [1.2.0] - 2026-11-03
 
 ### Aggiunto

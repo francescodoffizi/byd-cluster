@@ -10,7 +10,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
 import com.byd.clusternavbridge.R
-import com.byd.clusternavbridge.cluster.ClusterCommBridge
+import com.byd.clusternavbridge.model.NavState
 import com.byd.clusternavbridge.service.NavClusterService
 
 class MainActivity : AppCompatActivity() {
@@ -20,10 +20,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvNavState: TextView
     private lateinit var btnGrantOverlay: Button
     private lateinit var btnGrantNotification: Button
-    private lateinit var btnModePiccolo: Button
-    private lateinit var btnModeGrande: Button
     private lateinit var btnModeSemplice: Button
     private lateinit var btnReleaseFocus: Button
+    private lateinit var btnTestTbt: Button
     private lateinit var btnToggleFloatingPill: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,10 +34,9 @@ class MainActivity : AppCompatActivity() {
         tvNavState = findViewById(R.id.tvNavState)
         btnGrantOverlay = findViewById(R.id.btnGrantOverlay)
         btnGrantNotification = findViewById(R.id.btnGrantNotification)
-        btnModePiccolo = findViewById(R.id.btnModePiccolo)
-        btnModeGrande = findViewById(R.id.btnModeGrande)
         btnModeSemplice = findViewById(R.id.btnModeSemplice)
         btnReleaseFocus = findViewById(R.id.btnReleaseFocus)
+        btnTestTbt = findViewById(R.id.btnTestTbt)
         btnToggleFloatingPill = findViewById(R.id.btnToggleFloatingPill)
 
         btnGrantOverlay.setOnClickListener {
@@ -54,20 +52,31 @@ class MainActivity : AppCompatActivity() {
             startActivity(intent)
         }
 
-        btnModePiccolo.setOnClickListener {
-            NavClusterService.instance?.setClusterMode(ClusterCommBridge.MODE_PICCOLO, manual = true)
-        }
-
-        btnModeGrande.setOnClickListener {
-            NavClusterService.instance?.setClusterMode(ClusterCommBridge.MODE_GRANDE, manual = true)
-        }
-
         btnModeSemplice.setOnClickListener {
-            NavClusterService.instance?.setClusterMode(ClusterCommBridge.MODE_SEMPLICE, manual = true)
+            val serviceIntent = Intent(this, NavClusterService::class.java).apply {
+                action = NavClusterService.ACTION_ENABLE_TBT
+            }
+            startService(serviceIntent)
         }
 
         btnReleaseFocus.setOnClickListener {
-            NavClusterService.instance?.releaseClusterFocus(manual = true)
+            val serviceIntent = Intent(this, NavClusterService::class.java).apply {
+                action = NavClusterService.ACTION_DISABLE_TBT
+            }
+            startService(serviceIntent)
+        }
+
+        btnTestTbt.setOnClickListener {
+            val testState = NavState(
+                isActive = true,
+                sourcePackage = "com.google.android.apps.maps",
+                sourceName = "Google Maps (Test)",
+                distance = "250 m",
+                instruction = "Svolta a destra in Via Roma",
+                eta = "18:45",
+                remainingTimeDistance = "12 min • 4.5 km"
+            )
+            NavClusterService.instance?.onNavStateChanged(testState)
         }
 
         btnToggleFloatingPill.setOnClickListener {
@@ -100,20 +109,20 @@ class MainActivity : AppCompatActivity() {
         val enabledListeners = NotificationManagerCompat.getEnabledListenerPackages(this)
         val hasNotificationAccess = enabledListeners.contains(packageName)
         if (hasNotificationAccess) {
-            tvNotificationStatus.text = "Accesso Notifiche (Maps / ABRP): ✓ Attivo"
+            tvNotificationStatus.text = "Accesso Notifiche: ✓ Connesso"
             tvNotificationStatus.setTextColor(Color.parseColor("#00E676"))
             btnGrantNotification.isEnabled = false
             btnGrantNotification.text = "OK"
         } else {
-            tvNotificationStatus.text = "Accesso Notifiche (Maps / ABRP): ✗ Richiesto"
+            tvNotificationStatus.text = "Accesso Notifiche: ✗ Disconnesso (Frecce spente)"
             tvNotificationStatus.setTextColor(Color.parseColor("#FF5252"))
             btnGrantNotification.isEnabled = true
             btnGrantNotification.text = "Abilita"
         }
 
-        val activeState = NavClusterService.instance?.currentNavState
-        if (activeState != null && activeState.isActive) {
-            tvNavState.text = "Navigazione attiva: ${activeState.sourceName} (${activeState.distance} ${activeState.instruction})"
+        val navState = NavClusterService.instance?.currentNavState
+        if (navState != null && navState.isActive) {
+            tvNavState.text = "Navigazione attiva: ${navState.sourceName} -> ${navState.distance} ${navState.instruction}"
             tvNavState.setTextColor(Color.parseColor("#00E676"))
         } else {
             tvNavState.text = "Navigazione attiva: Nessuna (In attesa di Maps/ABRP)"

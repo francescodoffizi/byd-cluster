@@ -16,13 +16,13 @@ import kotlin.math.abs
 
 class FloatingPillView(
     private val context: Context,
-    private val onModeSelected: (Int) -> Unit,
-    private val onReleaseFocus: () -> Unit
+    private val onTbtEnabled: (Boolean) -> Unit
 ) {
 
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var pillView: View? = null
     private var isShowing = false
+    private var isTbtActive = true
 
     private var initialX = 0
     private var initialY = 0
@@ -30,8 +30,6 @@ class FloatingPillView(
     private var initialTouchY = 0f
 
     private var tvStatus: TextView? = null
-    private var btnPiccolo: TextView? = null
-    private var btnGrande: TextView? = null
     private var btnSemplice: TextView? = null
     private var btnOff: TextView? = null
 
@@ -55,29 +53,31 @@ class FloatingPillView(
         val view = inflater.inflate(R.layout.layout_floating_pill, null)
 
         tvStatus = view.findViewById(R.id.tvPillStatus)
-        btnPiccolo = view.findViewById(R.id.btnPillPiccolo)
-        btnGrande = view.findViewById(R.id.btnPillGrande)
+        val btnPiccolo: TextView? = view.findViewById(R.id.btnPillPiccolo)
+        val btnGrande: TextView? = view.findViewById(R.id.btnPillGrande)
         btnSemplice = view.findViewById(R.id.btnPillSemplice)
         btnOff = view.findViewById(R.id.btnPillOff)
 
-        btnPiccolo?.setOnClickListener {
-            highlightButton(ClusterCommBridge.MODE_PICCOLO)
-            onModeSelected(ClusterCommBridge.MODE_PICCOLO)
-        }
+        // Nascondiamo le modalità Piccolo e Grande (mappe rimosse)
+        btnPiccolo?.visibility = View.GONE
+        btnGrande?.visibility = View.GONE
 
-        btnGrande?.setOnClickListener {
-            highlightButton(ClusterCommBridge.MODE_GRANDE)
-            onModeSelected(ClusterCommBridge.MODE_GRANDE)
-        }
+        btnSemplice?.text = "Semplice"
+        btnSemplice?.visibility = View.VISIBLE
+        btnOff?.visibility = View.VISIBLE
+
+        updateButtonStates()
 
         btnSemplice?.setOnClickListener {
-            highlightButton(ClusterCommBridge.MODE_SEMPLICE)
-            onModeSelected(ClusterCommBridge.MODE_SEMPLICE)
+            isTbtActive = true
+            updateButtonStates()
+            onTbtEnabled(true)
         }
 
         btnOff?.setOnClickListener {
-            highlightButton(ClusterCommBridge.MODE_OFF)
-            onReleaseFocus()
+            isTbtActive = false
+            updateButtonStates()
+            onTbtEnabled(false)
         }
 
         view.setOnTouchListener { _, event ->
@@ -144,9 +144,8 @@ class FloatingPillView(
         }
     }
 
-    private fun highlightButton(mode: Int) {
-        btnPiccolo?.setTextColor(if (mode == ClusterCommBridge.MODE_PICCOLO) Color.parseColor("#00E676") else Color.WHITE)
-        btnGrande?.setTextColor(if (mode == ClusterCommBridge.MODE_GRANDE) Color.parseColor("#00E676") else Color.parseColor("#00B0FF"))
-        btnSemplice?.setTextColor(if (mode == ClusterCommBridge.MODE_SEMPLICE) Color.parseColor("#00E676") else Color.parseColor("#B0BEC5"))
+    private fun updateButtonStates() {
+        btnSemplice?.setTextColor(if (isTbtActive) Color.parseColor("#00E676") else Color.parseColor("#B0BEC5"))
+        btnOff?.setTextColor(if (!isTbtActive) Color.parseColor("#FF5252") else Color.parseColor("#B0BEC5"))
     }
 }

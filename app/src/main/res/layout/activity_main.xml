@@ -24,7 +24,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Bridge SOME/IP vettoriale per Google Maps e ABRP su cluster BYD"
+            android:text="v1.3.0 - Modalità Semplice Turn-by-Turn per Google Maps e ABRP"
             android:textColor="@color/text_secondary"
             android:textSize="14sp" />
 
@@ -134,7 +134,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Modalità Schermo Quadro Strumenti"
+                    android:text="Controllo Quadro Strumenti (Modalità Semplice)"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -143,11 +143,11 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="Seleziona la modalità visuale nativa sul display del cruscotto"
+                    android:text="Invia esclusivamente frecce, metri e svolte TBT al cruscotto di fabbrica."
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp" />
 
-                <!-- Grid of 3 modes -->
+                <!-- Action Buttons -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -155,61 +155,47 @@
                     android:orientation="horizontal">
 
                     <Button
-                        android:id="@+id/btnModePiccolo"
-                        style="@style/Widget.MaterialComponents.Button"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginEnd="4dp"
-                        android:layout_weight="1"
-                        android:backgroundTint="#263238"
-                        android:text="Piccolo (Modo 1)"
-                        android:textColor="@color/text_primary"
-                        android:textSize="11sp" />
-
-                    <Button
-                        android:id="@+id/btnModeGrande"
-                        style="@style/Widget.MaterialComponents.Button"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginEnd="4dp"
-                        android:layout_marginStart="4dp"
-                        android:layout_weight="1"
-                        android:backgroundTint="#00B0FF"
-                        android:text="Grande (Modo 3)"
-                        android:textColor="#000000"
-                        android:textSize="11sp" />
-
-                    <Button
                         android:id="@+id/btnModeSemplice"
                         style="@style/Widget.MaterialComponents.Button"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
+                        android:layout_marginEnd="4dp"
+                        android:layout_weight="1"
+                        android:backgroundTint="#00E676"
+                        android:text="Attiva TBT (Modo 2)"
+                        android:textColor="#000000"
+                        android:textSize="13sp" />
+
+                    <Button
+                        android:id="@+id/btnReleaseFocus"
+                        style="@style/Widget.MaterialComponents.Button"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
                         android:layout_marginStart="4dp"
                         android:layout_weight="1"
-                        android:backgroundTint="#37474F"
-                        android:text="Semplice (Modo 2)"
+                        android:backgroundTint="#263238"
+                        android:text="Disattiva TBT"
                         android:textColor="@color/text_primary"
-                        android:textSize="11sp" />
+                        android:textSize="13sp" />
                 </LinearLayout>
 
                 <Button
-                    android:id="@+id/btnReleaseFocus"
-                    style="@style/Widget.MaterialComponents.Button"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:backgroundTint="#1E2830"
-                    android:text="Rilascia Focus (Torna ai Cruscotti OEM - Modo 0)"
-                    android:textColor="@color/status_red" />
-
-                <Button
-                    android:id="@+id/btnToggleFloatingPill"
+                    android:id="@+id/btnTestTbt"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="Mostra / Nascondi Control Pill Flottante"
+                    android:layout_marginTop="12dp"
+                    android:text="Simula Svolta Test (Tra 250m a Destra in Via Roma)"
                     android:textColor="@color/primary" />
+
+                <Button
+                    android:id="@+id/btnToggleFloatingPill"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="Mostra / Nascondi Pill Flottante"
+                    android:textColor="@color/text_secondary" />
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

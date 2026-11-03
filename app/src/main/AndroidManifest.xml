@@ -31,16 +31,6 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".ui.ClusterMapActivity"
-            android:exported="true"
-            android:theme="@style/Theme.ClusterMap"
-            android:launchMode="singleInstance"
-            android:screenOrientation="landscape"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
-            android:showForAllUsers="true"
-            android:resizeableActivity="true" />
-
         <service
             android:name=".service.NavClusterService"
             android:exported="true"
