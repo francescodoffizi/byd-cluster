@@ -4,6 +4,24 @@ Tutte le modifiche rilevanti a questo progetto saranno documentate in questo fil
 
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/).
 
+## [1.4.1] - 2026-11-04
+
+### Modificato & Corretto (Audit Live SpiderAgy su Sealion 7)
+- **Fix Crash Richiesta Permessi Notifiche DiLink**:
+  - Racchiuso `startActivity` con `ACTION_NOTIFICATION_LISTENER_SETTINGS` in blocco `try/catch` per gestire `ActivityNotFoundException` causato dall'assenza della relativa Activity nell'app `Settings` OEM DiLink 100/5.0.
+- **Risoluzione Mancata Connessione IPC & Comandi Droppati (`ClusterCoreService`)**:
+  - Aggiunto il blocco `<queries>` in `AndroidManifest.xml` per dichiarare esplicitamente la visibilità del package `com.ts.appservice.cluster`, `app.revanced.android.apps.maps`, `com.google.android.apps.maps` e `com.iternio.abrpapp` (obbligatorio su targetSdk 30 / Android 11).
+  - Implementata una coda thread-safe (`pendingCommands`) in `ClusterCommBridge` per accodare qualsiasi comando IPC inviato durante la fase asincrona di connessione di `bindService`.
+  - Implementato `DeathRecipient` per riconnessione automatica in caso di crash o riavvio del servizio di sistema `ClusterCoreService`.
+  - Invocazione esplicita e garantita di `bindDirectService()` nel ciclo di vita di `NavClusterService` (`onCreate` e `onStartCommand`) e pulizia con `unbindService()` in `onDestroy`.
+- **Allineamento Mappatura Modalità Cluster DiLink/QNX**:
+  - Allineati i parametri `moet_extension_navi_display_mode` con gli stati presentation QNX (`MAP_STATE_SMALL_OPEN = 5`, `MAP_STATE_FULL_OPEN = 6`, `MAP_STATE_SIMPLE_OPEN = 7`, `MAP_STATE_NAVI_CLOSE = 1`).
+- **Parser Notifiche Google Maps ReVanced & ABRP Robusto**:
+  - Implementato supporto al formato notifica di Google Maps ReVanced (`app.revanced.android.apps.maps`) dove `EXTRA_TITLE` contiene la distanza (es. `22 km`, `350 m`), `EXTRA_TEXT` contiene l'istruzione di manovra e `EXTRA_SUB_TEXT` contiene tempo, distanza residua e orario di arrivo (`40 min · 31 km · Arrivo 09:29`).
+  - Parsing automatico dei minuti ed ETA per calcolo esatto di `NaviToDestTime` in secondi.
+- **Protezione Permessi Geolocalizzazione in `ClusterPresentation`**:
+  - Aggiunta verifica preventiva con `ContextCompat.checkSelfPermission` prima della registrazione dei listener di `LocationManager`, evitando `SecurityException` e log spam.
+
 ## [1.4.0] - 2026-11-03
 
 ### Aggiunto & Architettura Completa (Reverse Engineering Neusoft DiLink)

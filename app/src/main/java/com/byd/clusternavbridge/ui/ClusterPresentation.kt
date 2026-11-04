@@ -2,6 +2,7 @@ package com.byd.clusternavbridge.ui
 
 import android.app.Presentation
 import android.content.Context
+import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -10,6 +11,7 @@ import android.util.Log
 import android.view.Display
 import android.view.View
 import android.view.WindowManager
+import androidx.core.content.ContextCompat
 import com.byd.clusternavbridge.R
 import com.byd.clusternavbridge.databinding.ActivityClusterMapBinding
 import com.byd.clusternavbridge.model.NavState
@@ -91,20 +93,38 @@ class ClusterPresentation(
 
     private fun setupLocationUpdates() {
         try {
+            val hasFine = ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            val hasCoarse = ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!hasFine && !hasCoarse) {
+                Log.w(TAG, "Location permissions not granted for ClusterPresentation")
+                return
+            }
+
             locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             val lm = locationManager ?: return
 
             val gpsEnabled = lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
             val networkEnabled = lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
 
-            if (gpsEnabled) {
+            if (gpsEnabled && hasFine) {
                 lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1.0f, this)
             } else if (networkEnabled) {
                 lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1000L, 1.0f, this)
             }
 
-            val lastKnown = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            val lastKnown = if (hasFine) {
+                lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                    ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            } else {
+                lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            }
             lastKnown?.let { onLocationChanged(it) }
         } catch (e: Exception) {
             Log.w(TAG, "Error initializing LocationManager on ClusterPresentation", e)

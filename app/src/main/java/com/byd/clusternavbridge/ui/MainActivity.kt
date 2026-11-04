@@ -1,5 +1,6 @@
 package com.byd.clusternavbridge.ui
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
@@ -7,6 +8,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.byd.clusternavbridge.R
 import com.byd.clusternavbridge.cluster.ClusterCommBridge
@@ -52,8 +54,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnGrantNotification.setOnClickListener {
-            val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-            startActivity(intent)
+            try {
+                val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                startActivity(intent)
+            } catch (e: ActivityNotFoundException) {
+                Toast.makeText(
+                    this,
+                    "Impostazioni notifiche non disponibili su DiLink. Permesso gestito via sistema/ADB.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
 
         btnModePiccolo.setOnClickListener {

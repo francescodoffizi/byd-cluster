@@ -10,6 +10,7 @@ import android.os.Parcel
 import android.provider.Settings
 import android.util.Log
 import com.byd.clusternavbridge.model.NavState
+import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * ClusterCommBridge v1.4.0 - Supporto Completo Multi-Modale (Semplice, Piccolo, Grande)
@@ -60,12 +61,24 @@ class ClusterCommBridge(private val context: Context) {
         private set
     private var isNavActive = false
     private var isBound = false
+    private val pendingCommands = ConcurrentLinkedQueue<Pair<Int, Bundle>>()
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             Log.i(TAG, "Direct connection to ClusterCoreService established (Binder: $service)")
             directBinder = service
             isBound = true
+            try {
+                service?.linkToDeath({
+                    Log.w(TAG, "ClusterCoreService binder died, attempting reconnect")
+                    directBinder = null
+                    isBound = false
+                    bindDirectService()
+                }, 0)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to linkToDeath on service: ${e.message}")
+            }
+            flushPendingCommands()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -92,6 +105,19 @@ class ClusterCommBridge(private val context: Context) {
         }
     }
 
+    private fun flushPendingCommands() {
+        val binder = directBinder ?: return
+        var count = 0
+        while (pendingCommands.isNotEmpty()) {
+            val (commandId, bundle) = pendingCommands.poll() ?: break
+            dispatchCommandDirect(binder, commandId, bundle)
+            count++
+        }
+        if (count > 0) {
+            Log.i(TAG, "Flushed $count pending cluster commands after service connection")
+        }
+    }
+
     fun unbindService() {
         if (isBound) {
             try {
@@ -114,7 +140,7 @@ class ClusterCommBridge(private val context: Context) {
         when (mode) {
             MODE_PICCOLO -> {
                 isNavActive = true
-                applyDisplayModeSettings(MODE_PICCOLO, focusMap = 1)
+                applyDisplayModeSettings(3, focusMap = 1)
                 requestMapFocus(1)
                 sendNaviPresentationState(1, MAP_STATE_SMALL_OPEN)
                 startTbtMode()
@@ -122,7 +148,7 @@ class ClusterCommBridge(private val context: Context) {
             }
             MODE_GRANDE -> {
                 isNavActive = true
-                applyDisplayModeSettings(MODE_GRANDE, focusMap = 1)
+                applyDisplayModeSettings(3, focusMap = 1)
                 requestMapFocus(1)
                 sendNaviPresentationState(1, MAP_STATE_FULL_OPEN)
                 startTbtMode()
@@ -130,7 +156,7 @@ class ClusterCommBridge(private val context: Context) {
             }
             MODE_SEMPLICE -> {
                 isNavActive = true
-                applyDisplayModeSettings(MODE_SEMPLICE, focusMap = 0)
+                applyDisplayModeSettings(2, focusMap = 0)
                 abandonMapFocus(1)
                 sendNaviPresentationState(1, MAP_STATE_SIMPLE_OPEN)
                 startTbtMode()
@@ -138,7 +164,7 @@ class ClusterCommBridge(private val context: Context) {
             }
             MODE_OFF -> {
                 isNavActive = false
-                applyDisplayModeSettings(MODE_OFF, focusMap = 0)
+                applyDisplayModeSettings(0, focusMap = 0)
                 abandonMapFocus(1)
                 sendNaviPresentationState(1, MAP_STATE_NAVI_CLOSE)
                 stopTbtMode()
@@ -259,16 +285,17 @@ class ClusterCommBridge(private val context: Context) {
     }
 
     private fun dispatchCommand(commandId: Int, bundle: Bundle): Boolean {
-        var binder = directBinder
+        val binder = directBinder
         if (binder == null) {
+            Log.i(TAG, "dispatchCommand queued (commandId=$commandId): binder not yet connected, queuing")
+            pendingCommands.offer(Pair(commandId, Bundle(bundle)))
             bindDirectService()
-            binder = directBinder
+            return true
         }
-        if (binder == null) {
-            Log.w(TAG, "dispatchCommand deferred: ClusterCoreService binder not yet connected")
-            return false
-        }
+        return dispatchCommandDirect(binder, commandId, bundle)
+    }
 
+    private fun dispatchCommandDirect(binder: IBinder, commandId: Int, bundle: Bundle): Boolean {
         val data = Parcel.obtain()
         return try {
             data.writeInterfaceToken(DESCRIPTOR)

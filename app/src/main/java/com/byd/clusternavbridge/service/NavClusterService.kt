@@ -80,6 +80,7 @@ class NavClusterService : Service() {
         Log.i(TAG, "NavClusterService onCreate (v1.4.0 Multi-Modale)")
 
         clusterBridge = ClusterCommBridge(this)
+        clusterBridge.bindDirectService()
 
         powerMonitor = VehiclePowerMonitor(this) { isPowered ->
             Log.i(TAG, "Vehicle power state updated: isPowered=$isPowered")
@@ -103,6 +104,7 @@ class NavClusterService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        clusterBridge.bindDirectService()
         when (intent?.action) {
             ACTION_SET_MODE -> {
                 val mode = intent.getIntExtra(EXTRA_MODE, ClusterCommBridge.MODE_SEMPLICE)
@@ -222,6 +224,7 @@ class NavClusterService : Service() {
         closeClusterPresentation()
         floatingPill?.hide()
         clusterBridge.switchClusterMode(ClusterCommBridge.MODE_OFF)
+        clusterBridge.unbindService()
         instance = null
     }
 

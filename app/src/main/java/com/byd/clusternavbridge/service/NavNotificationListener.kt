@@ -76,9 +76,11 @@ class NavNotificationListener : NotificationListenerService() {
         }
 
         val extras: Bundle = notification.extras ?: return false
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
-        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString() ?: ""
+        val title = (extras.getCharSequence(Notification.EXTRA_TITLE)
+            ?: extras.getCharSequence(Notification.EXTRA_TITLE_BIG))?.toString()?.trim() ?: ""
+        val text = (extras.getCharSequence(Notification.EXTRA_TEXT)
+            ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT))?.toString()?.trim() ?: ""
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim() ?: ""
 
         val appName = when (pkg) {
             "app.revanced.android.apps.maps" -> "Google Maps"
@@ -87,27 +89,53 @@ class NavNotificationListener : NotificationListenerService() {
             else -> "Nav"
         }
 
+        if (title.isEmpty() && text.isEmpty()) {
+            return false
+        }
+
         Log.d(TAG, "[$appName] Ongoing nav - Title: '$title' | Text: '$text' | SubText: '$subText'")
 
-        // Parse turn, distance, instruction, ETA
-        var distance = ""
-        var instruction = text
-        var eta = ""
-        var remaining = ""
+        // Helper regex per identificare stringhe di distanza pura (es. '22 km', '350 m', '1.5 mi')
+        val distPattern = Regex("^[~]?[\\s]*[0-9]+(?:[.,][0-9]+)?\\s*(m|km|mi|ft)\\.?$", RegexOption.IGNORE_CASE)
 
-        if (title.isNotEmpty()) {
-            val parts = title.split(" - ", limit = 2)
-            if (parts.size == 2) {
-                distance = parts[0].trim()
-                instruction = parts[1].trim()
-            } else {
+        var distance = ""
+        var instruction = ""
+
+        when {
+            distPattern.matches(title) -> {
+                // Formato Google Maps ReVanced: Title='22 km', Text='Rimani su A90'
                 distance = title
+                instruction = text
+            }
+            distPattern.matches(text) -> {
+                // Formato alternativo: Title='Svolta a destra', Text='300 m'
+                distance = text
+                instruction = title
+            }
+            title.contains(" - ") -> {
+                val parts = title.split(" - ", limit = 2)
+                distance = parts[0].trim()
+                instruction = if (text.isNotEmpty()) "${parts[1].trim()} - $text" else parts[1].trim()
+            }
+            else -> {
+                distance = title
+                instruction = text
             }
         }
 
+        // Parsing avanzato di ETA e tempo/distanza residua
+        var eta = ""
+        var remaining = ""
+
         if (subText.isNotEmpty()) {
-            eta = subText
-        } else if (text.contains("•") || text.contains("min")) {
+            remaining = subText
+            val arrivalMatch = Regex("(?i)(?:arrivo|eta|arrival)\\s*([0-9]{1,2}[:.][0-9]{2})").find(subText)
+            eta = if (arrivalMatch != null) {
+                arrivalMatch.groupValues[1]
+            } else {
+                subText
+            }
+        } else if (text.contains("•") || text.contains("·") || text.contains("min")) {
             remaining = text
         }
 
