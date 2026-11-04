@@ -26,17 +26,19 @@ class ClusterCommBridge(private val context: Context) {
         const val SETTING_NAVI_DISPLAY_MODE = "moet_extension_navi_display_mode"
         const val SETTING_NAVI_FOCUS_MAP = "moet_extension_navi_focus_map"
 
-        // Modalità Quadro Strumenti DiLink
-        const val MODE_OFF = 0
-        const val MODE_PICCOLO = 1  // Mappa 3D nel riquadro centrale tra i quadranti
-        const val MODE_SEMPLICE = 2  // Indicatore sportivo frecce TBT vettoriali QNX
-        const val MODE_GRANDE = 3    // Mappa 3D a schermo intero panoramico
+        // Modalità Quadro Strumenti DiLink (allineate al reverse engineering OEM Neusoft BydMapLauncher)
+        const val MODE_OFF = 1       // MAP_STATE_NAVI_CLOSE (Cruscotto standard tachimetro)
+        const val MODE_SEMPLICE = 2  // MAP_STATE_SIMPLE_OPEN (Indicatore sportivo TBT QNX frecce vettoriali)
+        const val MODE_PICCOLO = 3   // MAP_STATE_SMALL_OPEN (Mappa 3D nel riquadro centrale tra i quadranti)
+        const val MODE_GRANDE = 4    // MAP_STATE_FULL_OPEN (Mappa 3D a schermo intero panoramico)
+        const val MODE_INTERO = 4    // Alias canonico DiLink OEM (Intero)
 
         const val CMD_NAVI = 16
 
         // Data types ufficiali da ClusterCommService / SomeIpClusterAdapter
         const val DATA_TYPE_NAVI_SWITCH = 15
         const val DATA_TYPE_NAVI_INFO = 16
+        const val DATA_TYPE_NAVI_SEND_DISPLAY_MODE = 30
         const val DATA_TYPE_NAVI_PRESENTATION_STATE = 31
         const val DATA_TYPE_REQUEST_MAP_FOCUS = 33
         const val DATA_TYPE_ABANDON_MAP_FOCUS = 34
@@ -141,14 +143,16 @@ class ClusterCommBridge(private val context: Context) {
             MODE_PICCOLO -> {
                 isNavActive = true
                 applyDisplayModeSettings(3, focusMap = 1)
+                sendDisplayMode(3)
                 requestMapFocus(1)
                 sendNaviPresentationState(1, MAP_STATE_SMALL_OPEN)
                 startTbtMode()
                 return true
             }
-            MODE_GRANDE -> {
+            MODE_GRANDE, MODE_INTERO -> {
                 isNavActive = true
-                applyDisplayModeSettings(3, focusMap = 1)
+                applyDisplayModeSettings(4, focusMap = 1)
+                sendDisplayMode(4)
                 requestMapFocus(1)
                 sendNaviPresentationState(1, MAP_STATE_FULL_OPEN)
                 startTbtMode()
@@ -157,6 +161,7 @@ class ClusterCommBridge(private val context: Context) {
             MODE_SEMPLICE -> {
                 isNavActive = true
                 applyDisplayModeSettings(2, focusMap = 0)
+                sendDisplayMode(2)
                 abandonMapFocus(1)
                 sendNaviPresentationState(1, MAP_STATE_SIMPLE_OPEN)
                 startTbtMode()
@@ -164,7 +169,8 @@ class ClusterCommBridge(private val context: Context) {
             }
             MODE_OFF -> {
                 isNavActive = false
-                applyDisplayModeSettings(0, focusMap = 0)
+                applyDisplayModeSettings(1, focusMap = 0)
+                sendDisplayMode(1)
                 abandonMapFocus(1)
                 sendNaviPresentationState(1, MAP_STATE_NAVI_CLOSE)
                 stopTbtMode()
@@ -172,6 +178,21 @@ class ClusterCommBridge(private val context: Context) {
             }
             else -> return false
         }
+    }
+
+    /**
+     * Invia la modalità di visualizzazione a ClusterCommService (DataType 30)
+     */
+    fun sendDisplayMode(mode: Int): Boolean {
+        val bundle = Bundle().apply {
+            putInt("msgType", 3)
+            putInt("subtype", 3)
+            putInt("DataType", DATA_TYPE_NAVI_SEND_DISPLAY_MODE)
+            putInt("mode", mode)
+        }
+        val sent = dispatchCommand(CMD_NAVI, bundle)
+        Log.i(TAG, "sendDisplayMode(mode=$mode) dispatched -> $sent")
+        return sent
     }
 
     /**

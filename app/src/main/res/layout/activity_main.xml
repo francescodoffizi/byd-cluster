@@ -166,7 +166,7 @@
                         android:layout_marginStart="4dp"
                         android:layout_weight="1"
                         android:backgroundTint="#00E5FF"
-                        android:text="Mappa Grande"
+                        android:text="Mappa Intero"
                         android:textColor="#000000"
                         android:textSize="12sp" />
                 </LinearLayout>

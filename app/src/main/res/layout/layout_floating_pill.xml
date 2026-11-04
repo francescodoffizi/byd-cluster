@@ -45,7 +45,7 @@
         android:textColor="@color/text_primary"
         android:textSize="11sp" />
 
-    <!-- Button Grande (Mode 3) -->
+    <!-- Button Intero (Mode 3) -->
     <TextView
         android:id="@+id/btnPillGrande"
         android:layout_width="wrap_content"
@@ -55,7 +55,7 @@
         android:gravity="center"
         android:paddingStart="8dp"
         android:paddingEnd="8dp"
-        android:text="Grande"
+        android:text="Intero"
         android:textColor="#00B0FF"
         android:textSize="11sp"
         android:textStyle="bold" />
@@ -74,7 +74,7 @@
         android:textColor="@color/text_secondary"
         android:textSize="11sp" />
 
-    <!-- Button Off (Mode 0) -->
+    <!-- Button Off (Mode 1) -->
     <TextView
         android:id="@+id/btnPillOff"
         android:layout_width="wrap_content"
@@ -85,6 +85,20 @@
         android:paddingEnd="8dp"
         android:text="Off"
         android:textColor="@color/status_red"
+        android:textSize="11sp" />
+
+    <!-- Button Voice (Mute/Unmute) -->
+    <TextView
+        android:id="@+id/btnPillVoice"
+        android:layout_width="wrap_content"
+        android:layout_height="30dp"
+        android:layout_marginStart="4dp"
+        android:background="@drawable/bg_pill_button"
+        android:gravity="center"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:text="Voce"
+        android:textColor="#00E676"
         android:textSize="11sp" />
 
 </LinearLayout>

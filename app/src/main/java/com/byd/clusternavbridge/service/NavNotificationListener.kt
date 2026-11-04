@@ -21,7 +21,10 @@ class NavNotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        Log.i(TAG, "NotificationListener connected! Scanning active notifications...")
+        Log.i(TAG, "NotificationListener connected! Ensuring NavClusterService is active...")
+        if (NavClusterService.instance == null) {
+            NavClusterService.startService(this)
+        }
         checkActiveNotifications()
     }
 
@@ -29,6 +32,9 @@ class NavNotificationListener : NotificationListenerService() {
         super.onNotificationPosted(sbn)
         sbn ?: return
         if (sbn.packageName in TARGET_PACKAGES) {
+            if (NavClusterService.instance == null) {
+                NavClusterService.startService(this)
+            }
             processNotification(sbn)
         }
     }

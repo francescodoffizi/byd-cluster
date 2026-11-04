@@ -4,6 +4,22 @@ Tutte le modifiche rilevanti a questo progetto saranno documentate in questo fil
 
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/).
 
+## [Unreleased]
+
+### Aggiunto
+- **Guida Vocale Turn-By-Turn Integrata (VoiceGuidanceManager)**:
+  - Implementata sintesi vocale TBT nativa all'interno di `NavClusterService` superando le restrizioni di Package Visibility di Android 11 su ABRP.
+  - Collegamento diretto a `org.woheller69.ttsengine` (modello neurale offline Piper VITS con lingua italiana e voce Riccardo/Paola).
+  - Canale audio dedicato per veicoli (`USAGE_ASSISTANCE_NAVIGATION_GUIDANCE`, `CONTENT_TYPE_SPEECH`) per abilitare l'audio ducking automatico della radio/multimedia del veicolo durante gli annunci vocali.
+  - Algoritmo di pronuncia intelligente a 3 stadi (preavviso iniziale, avvicinamento a ~200m, manovra imminente a <40m) per prevenire lo spam vocale continuo sui cambi di metro di ABRP e Google Maps.
+  - Controllo Mute rapido touch sulla Floating Pill (`[Voce ON]` verde / `[Muto]` grigio) e action intent di sistema `ACTION_TOGGLE_VOICE_MUTE` e `ACTION_TEST_VOICE`.
+
+### Modificato & Corretto (Neusoft OEM Reverse Engineering)
+- **Allineamento Costanti Display Mode OEM Neusoft**:
+  - Riallineate le costanti alle specifiche originali Neusoft (`1 = MODE_OFF`, `2 = MODE_SEMPLICE`, `3 = MODE_PICCOLO`, `4 = MODE_INTERO`), eliminando lo sfasamento 0..3 che provocava selezioni errate da touch.
+- **Risoluzione Display Nero su Display 1 HDMI (Surface Injection)**:
+  - Integrata `presentationMapTextureView` nel layout XML ed implementato lo sticky broadcast `com.neusoft.na.navigation.set.cluster.surface` con l'handle hardware `Surface` per consentire al video compositor QNX del quadro strumenti di agganciare il flusso video di MapLibre.
+
 ## [1.4.1] - 2026-11-04
 
 ### Modificato & Corretto (Audit Live SpiderAgy su Sealion 7)

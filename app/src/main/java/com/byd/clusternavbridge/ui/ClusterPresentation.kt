@@ -2,13 +2,17 @@ package com.byd.clusternavbridge.ui
 
 import android.app.Presentation
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.SurfaceTexture
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
 import android.util.Log
 import android.view.Display
+import android.view.Surface
+import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
 import androidx.core.content.ContextCompat
@@ -65,6 +69,8 @@ class ClusterPresentation(
 
         binding = ActivityClusterMapBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        setupClusterSurfaceInjection()
 
         binding.mapView.onCreate(savedInstanceState)
         binding.mapView.getMapAsync { map ->
@@ -206,6 +212,42 @@ class ClusterPresentation(
         }
     }
 
+    private fun setupClusterSurfaceInjection() {
+        val textureView = binding.presentationMapTextureView
+        textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
+                Log.i(TAG, "onSurfaceTextureAvailable ($width x $height) -> injecting clusterSurface to QNX compositor")
+                sendClusterSurface(Surface(surfaceTexture))
+            }
+
+            override fun onSurfaceTextureSizeChanged(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
+                Log.i(TAG, "onSurfaceTextureSizeChanged ($width x $height)")
+            }
+
+            override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
+                Log.i(TAG, "onSurfaceTextureDestroyed -> resetting clusterSurface")
+                sendClusterSurface(null)
+                return true
+            }
+
+            override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) {
+                // Keep frame flow continuous
+            }
+        }
+    }
+
+    private fun sendClusterSurface(surface: Surface?) {
+        try {
+            val intent = Intent("com.neusoft.na.navigation.set.cluster.surface").apply {
+                putExtra("clusterSurface", surface)
+            }
+            context.sendStickyBroadcast(intent)
+            Log.i(TAG, "Sticky broadcast sent for clusterSurface: $surface")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send clusterSurface sticky broadcast", e)
+        }
+    }
+
     override fun onStart() {
         super.onStart()
         binding.mapView.onStart()
@@ -222,6 +264,7 @@ class ClusterPresentation(
 
     fun cleanup() {
         Log.i(TAG, "ClusterPresentation cleanup")
+        sendClusterSurface(null)
         try {
             locationManager?.removeUpdates(this)
         } catch (_: Exception) {}

@@ -5,6 +5,12 @@
     android:background="#0A0E14"
     android:keepScreenOn="true">
 
+    <!-- OEM Neusoft Compatible Cluster Surface TextureView -->
+    <TextureView
+        android:id="@+id/presentationMapTextureView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
     <!-- MapLibre 3D Vector Map View -->
     <org.maplibre.android.maps.MapView
         android:id="@+id/mapView"

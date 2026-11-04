@@ -20,6 +20,7 @@ import com.byd.clusternavbridge.power.VehiclePowerMonitor
 import com.byd.clusternavbridge.ui.ClusterPresentation
 import com.byd.clusternavbridge.ui.FloatingPillView
 import com.byd.clusternavbridge.ui.MainActivity
+import com.byd.clusternavbridge.voice.VoiceGuidanceManager
 
 /**
  * NavClusterService v1.4.0
@@ -50,6 +51,8 @@ class NavClusterService : Service() {
         const val ACTION_ENABLE_TBT = "com.byd.clusternavbridge.action.ENABLE_TBT"
         const val ACTION_DISABLE_TBT = "com.byd.clusternavbridge.action.DISABLE_TBT"
         const val ACTION_TEST_TBT = "com.byd.clusternavbridge.action.TEST_TBT"
+        const val ACTION_TOGGLE_VOICE_MUTE = "com.byd.clusternavbridge.action.TOGGLE_VOICE_MUTE"
+        const val ACTION_TEST_VOICE = "com.byd.clusternavbridge.action.TEST_VOICE"
 
         fun startService(context: Context) {
             val intent = Intent(context, NavClusterService::class.java).apply {
@@ -65,6 +68,7 @@ class NavClusterService : Service() {
 
     private lateinit var clusterBridge: ClusterCommBridge
     private lateinit var powerMonitor: VehiclePowerMonitor
+    private lateinit var voiceManager: VoiceGuidanceManager
     private var floatingPill: FloatingPillView? = null
     private var clusterPresentation: ClusterPresentation? = null
 
@@ -77,16 +81,21 @@ class NavClusterService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        Log.i(TAG, "NavClusterService onCreate (v1.4.0 Multi-Modale)")
+        Log.i(TAG, "NavClusterService onCreate (v1.5.0 Multi-Modale + TTS Voice)")
 
         clusterBridge = ClusterCommBridge(this)
         clusterBridge.bindDirectService()
+
+        voiceManager = VoiceGuidanceManager(this) { isMuted ->
+            floatingPill?.updateVoiceMute(isMuted)
+        }
 
         powerMonitor = VehiclePowerMonitor(this) { isPowered ->
             Log.i(TAG, "Vehicle power state updated: isPowered=$isPowered")
             if (!isPowered) {
                 closeClusterPresentation()
                 clusterBridge.switchClusterMode(ClusterCommBridge.MODE_OFF)
+                voiceManager.stop()
                 floatingPill?.hide()
             } else {
                 initFloatingPill()
@@ -115,6 +124,13 @@ class NavClusterService : Service() {
             }
             ACTION_DISABLE_TBT -> {
                 setMode(ClusterCommBridge.MODE_OFF)
+            }
+            ACTION_TOGGLE_VOICE_MUTE -> {
+                voiceManager.toggleMute()
+            }
+            ACTION_TEST_VOICE -> {
+                Log.w(TAG, "Ricevuto ACTION_TEST_VOICE! Invocazione speak()")
+                voiceManager.speak("Indicazioni vocali BYD attive. Tra 300 metri svolta a destra.", force = true)
             }
             ACTION_TEST_TBT -> {
                 val testState = NavState(
@@ -210,7 +226,11 @@ class NavClusterService : Service() {
                 clusterBridge.sendTbtInfo(state)
                 clusterPresentation?.updateNavState(state)
             }
+            if (state.instruction.isNotEmpty()) {
+                voiceManager.onNavInstruction(state.instruction, state.distance)
+            }
         } else {
+            voiceManager.stop()
             setMode(ClusterCommBridge.MODE_OFF)
         }
 
@@ -220,6 +240,7 @@ class NavClusterService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.i(TAG, "NavClusterService onDestroy")
+        voiceManager.shutdown()
         powerMonitor.stop()
         closeClusterPresentation()
         floatingPill?.hide()
@@ -241,13 +262,23 @@ class NavClusterService : Service() {
                     context = this,
                     onModeSelected = { mode ->
                         setMode(mode)
+                    },
+                    onToggleVoice = {
+                        toggleVoiceMute()
                     }
                 )
             }
             floatingPill?.show()
+            floatingPill?.updateVoiceMute(voiceManager.isMuted)
         } else {
             Log.w(TAG, "Overlay permission not granted; floating pill deferred")
         }
+    }
+
+    fun toggleVoiceMute(): Boolean {
+        val muted = voiceManager.toggleMute()
+        floatingPill?.updateVoiceMute(muted)
+        return muted
     }
 
     fun toggleFloatingPill(): Boolean {
