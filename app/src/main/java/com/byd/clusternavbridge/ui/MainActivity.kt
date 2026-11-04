@@ -33,6 +33,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        findViewById<TextView>(R.id.tvAppSubtitle)?.text = "v${com.byd.clusternavbridge.BuildConfig.VERSION_NAME} - TBT & Display Neusoft OEM"
+
         tvOverlayStatus = findViewById(R.id.tvOverlayStatus)
         tvNotificationStatus = findViewById(R.id.tvNotificationStatus)
         tvNavState = findViewById(R.id.tvNavState)

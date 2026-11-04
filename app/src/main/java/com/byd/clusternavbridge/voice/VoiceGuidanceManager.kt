@@ -29,6 +29,20 @@ class VoiceGuidanceManager(
         private const val PREFERRED_ENGINE = "org.woheller69.ttsengine"
 
         private const val UTTERANCE_NAV_GUIDANCE = "byd_nav_guidance_"
+
+        private val GENERIC_STATUS_PHRASES = listOf(
+            "navigazione in corso",
+            "in navigazione",
+            "ricalcolo del percorso",
+            "ricalcolo",
+            "ricerca segnale gps",
+            "in attesa del segnale",
+            "in attesa di segnale",
+            "destinazione raggiunta",
+            "sei arrivato",
+            "sei arrivata",
+            "percorso aggiornato"
+        )
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -110,6 +124,10 @@ class VoiceGuidanceManager(
      */
     fun onNavInstruction(instruction: String, distanceStr: String) {
         if (isMuted || !isReady || instruction.isEmpty()) return
+        if (isGenericNonManeuver(instruction)) {
+            Log.d(TAG, "Skipping generic non-maneuver speech: '$instruction'")
+            return
+        }
 
         val normalizedManeuver = normalizeInstruction(instruction)
         val distanceMeters = parseDistanceToMeters(distanceStr)
@@ -194,12 +212,18 @@ class VoiceGuidanceManager(
         isReady = false
     }
 
+    private fun isGenericNonManeuver(text: String): Boolean {
+        val lower = text.lowercase(Locale.ITALIAN).trim()
+        if (lower.isEmpty()) return true
+        return GENERIC_STATUS_PHRASES.any { lower == it || lower.startsWith("$it ") || lower.startsWith("$it ·") || lower.startsWith("$it -") }
+    }
+
     private fun determineStage(distanceMeters: Int): Int {
         return when {
-            distanceMeters <= 50 -> 3 // Svolta imminente
+            distanceMeters in 1..50 -> 3 // Svolta imminente
             distanceMeters in 51..300 -> 2 // Avvicinamento
             distanceMeters > 300 -> 1 // Preavviso
-            else -> 1
+            else -> 1 // Non specificata o 0, non trattare come svolta imminente
         }
     }
 

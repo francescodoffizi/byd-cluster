@@ -57,7 +57,11 @@ class ClusterPresentation(
         // Inizializza MapLibre prima dell'inflater
         MapLibre.getInstance(context)
 
-        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window?.apply {
+            addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            addFlags(WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED)
+            setLayout(1920, 720)
+        }
         window?.decorView?.systemUiVisibility = (
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                 or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
@@ -217,11 +221,18 @@ class ClusterPresentation(
         textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
                 Log.i(TAG, "onSurfaceTextureAvailable ($width x $height) -> injecting clusterSurface to QNX compositor")
-                sendClusterSurface(Surface(surfaceTexture))
+                if (width > 0 && height > 0) {
+                    sendClusterSurface(Surface(surfaceTexture))
+                } else {
+                    Log.w(TAG, "SurfaceTexture available with non-positive dimensions ($width x $height), deferring sendClusterSurface")
+                }
             }
 
             override fun onSurfaceTextureSizeChanged(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
                 Log.i(TAG, "onSurfaceTextureSizeChanged ($width x $height)")
+                if (width > 0 && height > 0) {
+                    sendClusterSurface(Surface(surfaceTexture))
+                }
             }
 
             override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {

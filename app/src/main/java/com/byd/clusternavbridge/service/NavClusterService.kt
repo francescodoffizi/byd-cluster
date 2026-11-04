@@ -222,10 +222,9 @@ class NavClusterService : Service() {
         if (state.isActive) {
             if (currentMode == ClusterCommBridge.MODE_OFF) {
                 setMode(ClusterCommBridge.MODE_SEMPLICE)
-            } else {
-                clusterBridge.sendTbtInfo(state)
-                clusterPresentation?.updateNavState(state)
             }
+            clusterBridge.sendTbtInfo(state)
+            clusterPresentation?.updateNavState(state)
             if (state.instruction.isNotEmpty()) {
                 voiceManager.onNavInstruction(state.instruction, state.distance)
             }
@@ -320,7 +319,7 @@ class NavClusterService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("BYD Cluster Nav Bridge v1.4.0")
+            .setContentTitle("BYD Cluster Nav Bridge v${com.byd.clusternavbridge.BuildConfig.VERSION_NAME}")
             .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_navigation)
             .setContentIntent(pendingIntent)
