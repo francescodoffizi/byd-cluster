@@ -19,6 +19,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var tvOverlayStatus: TextView
     private lateinit var tvNotificationStatus: TextView
+    private lateinit var tvSecureSettingsStatus: TextView
     private lateinit var tvNavState: TextView
     private lateinit var btnGrantOverlay: Button
     private lateinit var btnGrantNotification: Button
@@ -37,6 +38,7 @@ class MainActivity : AppCompatActivity() {
 
         tvOverlayStatus = findViewById(R.id.tvOverlayStatus)
         tvNotificationStatus = findViewById(R.id.tvNotificationStatus)
+        tvSecureSettingsStatus = findViewById(R.id.tvSecureSettingsStatus)
         tvNavState = findViewById(R.id.tvNavState)
         btnGrantOverlay = findViewById(R.id.btnGrantOverlay)
         btnGrantNotification = findViewById(R.id.btnGrantNotification)
@@ -135,6 +137,15 @@ class MainActivity : AppCompatActivity() {
             tvNotificationStatus.text = "Accesso Notifiche (Maps / ABRP): ✗ Mancante"
             tvNotificationStatus.setTextColor(Color.parseColor("#FF5252"))
             btnGrantNotification.isEnabled = true
+        }
+
+        val hasSecureSettings = checkCallingOrSelfPermission("android.permission.WRITE_SECURE_SETTINGS") == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (hasSecureSettings) {
+            tvSecureSettingsStatus.text = "Controllo Quadro (WRITE_SECURE_SETTINGS): ✓ Concesso"
+            tvSecureSettingsStatus.setTextColor(Color.parseColor("#00E676"))
+        } else {
+            tvSecureSettingsStatus.text = "Controllo Quadro (WRITE_SECURE_SETTINGS): ✗ Mancante (richiede adb grant)"
+            tvSecureSettingsStatus.setTextColor(Color.parseColor("#FF5252"))
         }
 
         val activeState = NavClusterService.instance?.currentNavState

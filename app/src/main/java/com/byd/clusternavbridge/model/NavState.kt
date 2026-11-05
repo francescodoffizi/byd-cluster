@@ -6,6 +6,7 @@ data class NavState(
     val sourceName: String = "",
     val distance: String = "",
     val instruction: String = "",
+    val destination: String = "",
     val eta: String = "",
     val remainingTimeDistance: String = "",
     val timestamp: Long = System.currentTimeMillis()

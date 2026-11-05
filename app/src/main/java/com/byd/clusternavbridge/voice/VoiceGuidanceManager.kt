@@ -38,7 +38,8 @@ class VoiceGuidanceManager(
             "ricerca segnale gps",
             "in attesa del segnale",
             "in attesa di segnale",
-            "percorso aggiornato"
+            "percorso aggiornato",
+            "fine della navigazione"
         )
     }
 
@@ -51,8 +52,9 @@ class VoiceGuidanceManager(
 
     // Tracking della manovra corrente per anti-spam
     private var lastManeuverKey: String = ""
-    private var lastSpokenStage: Int = 0 // 0: nessuno, 1: preavviso (>400m), 2: avvicinamento (150-300m), 3: imminente (<50m)
+    private var lastSpokenStage: Int = 0 // 0: nessuno, 1: preavviso (>1200m), 2: medio (350-1200m), 3: avvicinamento (60-350m), 4: imminente (<60m)
     private var lastSpokenTimestamp: Long = 0L
+    private var hasAnnouncedRouteStart = false
 
     init {
         initTtsEngine()
@@ -119,11 +121,20 @@ class VoiceGuidanceManager(
     /**
      * Elabora l'istruzione di navigazione TBT in arrivo
      */
-    fun onNavInstruction(instruction: String, distanceStr: String) {
+    fun onNavInstruction(instruction: String, distanceStr: String, destination: String = "") {
         if (isMuted || !isReady || instruction.isEmpty()) return
-        if (isGenericNonManeuver(instruction)) {
-            Log.d(TAG, "Skipping generic non-maneuver speech: '$instruction'")
+        if (isGenericNonManeuver(instruction) || isDestinationSummary(instruction)) {
+            Log.d(TAG, "Skipping non-maneuver or destination summary speech: '$instruction'")
             return
+        }
+
+        // Se è l'inizio del percorso e abbiamo una destinazione valida, possiamo fare l'annuncio iniziale una tantum
+        if (!hasAnnouncedRouteStart && destination.isNotBlank()) {
+            hasAnnouncedRouteStart = true
+            val cleanDest = destination.replace(Regex("^(Verso\\s+|Destinazione:\\s*|Direzione\\s+)", RegexOption.IGNORE_CASE), "").trim()
+            val startPhrase = if (cleanDest.isNotBlank()) "Navigazione avviata verso $cleanDest" else "Navigazione avviata"
+            speak(startPhrase)
+            lastSpokenTimestamp = System.currentTimeMillis()
         }
 
         val normalizedManeuver = normalizeInstruction(instruction)
@@ -185,6 +196,7 @@ class VoiceGuidanceManager(
         } catch (_: Exception) {}
         lastManeuverKey = ""
         lastSpokenStage = 0
+        hasAnnouncedRouteStart = false
     }
 
     fun toggleMute(): Boolean {
@@ -209,9 +221,31 @@ class VoiceGuidanceManager(
         isReady = false
     }
 
+    fun isDestinationSummary(instruction: String): Boolean {
+        val lower = instruction.lowercase(Locale.ITALIAN).trim()
+        if (lower.isEmpty()) return true
+        val isDestPattern = lower.startsWith("verso ") ||
+                lower.startsWith("direzione ") ||
+                lower.startsWith("destinazione") ||
+                lower.startsWith("rotta verso") ||
+                lower.startsWith("arrivo a ") ||
+                lower == "casa" || lower == "lavoro" || lower == "home" || lower == "work"
+
+        if (!isDestPattern) return false
+
+        // Se contiene una parola chiave di manovra effettiva (es. "Prendi l'uscita verso Roma"), NON è solo un riepilogo
+        val hasManeuver = listOf(
+            "svolta", "gira", "prendi", "esci", "uscita", "rotonda", "rotatoria",
+            "tieni", "rimani", "continua", "prosegui", "destra", "sinistra"
+        ).any { lower.contains(it) }
+
+        return !hasManeuver
+    }
+
     private fun isGenericNonManeuver(text: String): Boolean {
         val lower = text.lowercase(Locale.ITALIAN).trim()
         if (lower.isEmpty()) return true
+        if (isDestinationSummary(lower)) return true
         return GENERIC_STATUS_PHRASES.any { lower == it || lower.startsWith("$it ") || lower.startsWith("$it ·") || lower.startsWith("$it -") }
     }
 
@@ -248,8 +282,15 @@ class VoiceGuidanceManager(
             }
             1 -> {
                 if (distanceMeters >= 1000) {
-                    val km = String.format(Locale.ITALY, "%.1f", distanceMeters / 1000.0)
-                    "Tra $km chilometri, $cleanInstr"
+                    val kmValue = distanceMeters / 1000.0
+                    val kmText = if (kmValue % 1.0 == 0.0) {
+                        val intKm = kmValue.toInt()
+                        if (intKm == 1) "1 chilometro" else "$intKm chilometri"
+                    } else {
+                        val formatted = String.format(Locale.ITALY, "%.1f", kmValue)
+                        "$formatted chilometri"
+                    }
+                    "Tra $kmText, $cleanInstr"
                 } else {
                     val roundDist = (distanceMeters / 100) * 100
                     if (roundDist > 0) "Tra $roundDist metri, $cleanInstr" else cleanInstr

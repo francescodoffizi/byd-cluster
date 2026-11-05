@@ -4,6 +4,26 @@ Tutte le modifiche rilevanti a questo progetto saranno documentate in questo fil
 
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/).
 
+## [Unreleased]
+
+### Modificato & Corretto (Task #699 - Fix Root Cause Svolte ABRP, Separazione Destinazione/Manovra & Permessi Cluster)
+- **Eliminazione Gate Notifiche & Ispezione Incondizionata RemoteViews**:
+  - In `NavNotificationListener.kt`, rimosso il blocco `if (title.isEmpty() && text.isEmpty())` che impediva l'estrazione delle notifiche di ABRP (`com.iternio.abrpapp`) quando `title` o `text` contenevano riepiloghi o nomi destinazione statici.
+  - Per ABRP o in presenza di layout personalizzati, l'estrazione via reflection dei `RemoteViews` viene eseguita incondizionatamente.
+- **Separazione Destinazione vs Svolte Reali (Anti-Falsa Manovra)**:
+  - Introdotto filtro `isDestinationOrRouteSummary` per identificare e isolare frasi di destinazione ("Verso Casa", "Destinazione: Casa", "Direzione Roma").
+  - Le destinazioni non vengono più scambiate per istruzioni di manovra e memorizzate nel nuovo campo `destination` di `NavState`.
+  - Risolto il problema per cui veniva pronunciato e visualizzato l'assurdo messaggio *"Tra 10 chilometri, Verso Casa"* al posto delle vere svolte.
+- **Differenziazione Distanze di Manovra vs Distanza Totale/Tappa**:
+  - Implementata logica di classificazione delle distanze estratte: le distanze in metri ("300 m") hanno priorità assoluta come distanza di manovra (`distance`), mentre le distanze in km o i riepiloghi ("42 km • 35 min") vengono assegnati alla distanza totale residua (`remainingTimeDistance`).
+- **Filtro Vocale Anti-Destinazione & Annuncio Partenza Pulito**:
+  - In `VoiceGuidanceManager.kt`, vietata la pronuncia di nomi destinazione come finte manovre di svolta (`isDestinationSummary`).
+  - Introdotto annuncio iniziale dedicato una tantum alla partenza (*"Navigazione avviata verso Casa"*), lasciando al TTS delle svolte solo le manovre effettive.
+  - Pulita la pronuncia dei chilometri interi (es. "10 chilometri" invece di "10,0 chilometri").
+- **Protezione Permessi Quadro Strumenti (`WRITE_SECURE_SETTINGS`)**:
+  - In `ClusterCommBridge.kt`, aggiunto intercettamento esplicito di `SecurityException` con logging di errore chiaro per indicare la necessità di abilitare `WRITE_SECURE_SETTINGS` via ADB se mancante.
+  - In `MainActivity.kt` e `activity_main.xml`, aggiunto monitor visivo in tempo reale sullo stato del permesso `WRITE_SECURE_SETTINGS`.
+
 ## [1.5.2] - 2026-11-05
 
 ### Modificato & Corretto (Task #697 - Fix ABRP RemoteViews, Handshake TBT QNX & Voce Multi-Stadio)

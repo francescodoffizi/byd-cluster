@@ -92,68 +92,7 @@ class NavNotificationListener : NotificationListenerService() {
             ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT))?.toString()?.trim() ?: ""
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim() ?: ""
 
-        // Se title e text sono vuoti, ispezioniamo i RemoteViews personalizzati (cruciale per ABRP com.iternio.abrpapp)
-        if (title.isEmpty() && text.isEmpty()) {
-            val allViews = listOfNotNull(
-                notification.bigContentView,
-                notification.contentView,
-                notification.headsUpContentView
-            )
-            val extracted = mutableListOf<String>()
-            for (rv in allViews) {
-                val viewsTexts = extractTextsFromRemoteViews(rv, pkg)
-                for (s in viewsTexts) {
-                    if (!extracted.contains(s)) extracted.add(s)
-                }
-            }
-            Log.w(TAG, "[$pkg] Extracted ${extracted.size} strings from RemoteViews: $extracted")
-
-            if (extracted.isNotEmpty()) {
-                val distPatternHelper = Regex("^[~]?[\\s]*[0-9]+(?:[.,][0-9]+)?\\s*(m|km|mi|ft)\\.?$", RegexOption.IGNORE_CASE)
-                val etaPatternHelper = Regex("^(?:[01]?[0-9]|2[0-3]):[0-5][0-9]$")
-                val arrivalPatternHelper = Regex("(?i)(?:arrivo|eta|arrival)\\s*([0-9]{1,2}[:.][0-9]{2})")
-                val remainingPatternHelper = Regex("(?i)(\\d+\\s*(?:min|h|ore|km)\\b.*[•·].*|.*[•·].*\\b(?:min|km)\\b|\\d+\\s*min\\b)")
-                val batteryPatternHelper = Regex("^[0-9]{1,3}\\s*%$")
-
-                var foundDist = ""
-                var foundEta = ""
-                var foundRemaining = ""
-                val candidateInstructions = mutableListOf<String>()
-
-                for (item in extracted) {
-                    val arrivalMatch = arrivalPatternHelper.find(item)
-                    when {
-                        distPatternHelper.matches(item) && foundDist.isEmpty() -> foundDist = item
-                        etaPatternHelper.matches(item) && foundEta.isEmpty() -> foundEta = item
-                        arrivalMatch != null && foundEta.isEmpty() -> foundEta = arrivalMatch.groupValues[1]
-                        remainingPatternHelper.matches(item) && foundRemaining.isEmpty() -> foundRemaining = item
-                        batteryPatternHelper.matches(item) -> { /* Skip battery % like 45% */ }
-                        isGenericStatus(item) -> { /* Skip generic status */ }
-                        else -> {
-                            if (item.length >= 2 && !candidateInstructions.contains(item)) {
-                                candidateInstructions.add(item)
-                            }
-                        }
-                    }
-                }
-
-                if (foundDist.isNotEmpty()) {
-                    title = foundDist
-                    text = candidateInstructions.joinToString(" - ")
-                } else if (candidateInstructions.isNotEmpty()) {
-                    title = ""
-                    text = candidateInstructions.joinToString(" - ")
-                }
-
-                if (foundEta.isNotEmpty()) {
-                    extras.putString("byd_extracted_eta", foundEta)
-                }
-                if (foundRemaining.isNotEmpty()) {
-                    extras.putString("byd_extracted_remaining", foundRemaining)
-                }
-            }
-        }
-
+        val isAbrp = (pkg == "com.iternio.abrpapp")
         val appName = when (pkg) {
             "app.revanced.android.apps.maps" -> "Google Maps"
             "com.google.android.apps.maps" -> "Google Maps"
@@ -161,62 +100,147 @@ class NavNotificationListener : NotificationListenerService() {
             else -> "Nav"
         }
 
-        if (title.isEmpty() && text.isEmpty()) {
-            return false
-        }
-
-        Log.w(TAG, "[$appName] Ongoing nav - Title: '$title' | Text: '$text' | SubText: '$subText'")
-
-        // Helper regex per identificare stringhe di distanza pura (es. '22 km', '350 m', '1.5 mi')
-        val distPattern = Regex("^[~]?[\\s]*[0-9]+(?:[.,][0-9]+)?\\s*(m|km|mi|ft)\\.?$", RegexOption.IGNORE_CASE)
+        val distPatternHelper = Regex("^[~]?[\\s]*[0-9]+(?:[.,][0-9]+)?\\s*(m|km|mi|ft)\\.?$", RegexOption.IGNORE_CASE)
+        val etaPatternHelper = Regex("^(?:[01]?[0-9]|2[0-3]):[0-5][0-9]$")
+        val arrivalPatternHelper = Regex("(?i)(?:arrivo|eta|arrival)\\s*([0-9]{1,2}[:.][0-9]{2})")
+        val remainingPatternHelper = Regex("(?i)(\\d+\\s*(?:min|h|ore|km)\\b.*[•·].*|.*[•·].*\\b(?:min|km)\\b|\\d+\\s*min\\b)")
+        val batteryPatternHelper = Regex("^[0-9]{1,3}\\s*%$")
 
         var distance = ""
         var instruction = ""
-
-        when {
-            distPattern.matches(title) -> {
-                // Formato Google Maps ReVanced: Title='22 km', Text='Rimani su A90'
-                distance = title
-                instruction = text
-            }
-            distPattern.matches(text) -> {
-                // Formato alternativo: Title='Svolta a destra', Text='300 m'
-                distance = text
-                instruction = title
-            }
-            title.contains(" - ") -> {
-                val parts = title.split(" - ", limit = 2)
-                distance = parts[0].trim()
-                instruction = if (text.isNotEmpty()) "${parts[1].trim()} - $text" else parts[1].trim()
-            }
-            else -> {
-                distance = title
-                instruction = text
-            }
-        }
-
-        // Parsing avanzato di ETA e tempo/distanza residua
+        var destination = ""
         var eta = extras.getString("byd_extracted_eta", "")
         var remaining = extras.getString("byd_extracted_remaining", "")
 
-        if (subText.isNotEmpty()) {
-            remaining = subText
-            val arrivalMatch = Regex("(?i)(?:arrivo|eta|arrival)\\s*([0-9]{1,2}[:.][0-9]{2})").find(subText)
-            eta = if (arrivalMatch != null) {
-                arrivalMatch.groupValues[1]
-            } else {
-                subText
+        val allViews = listOfNotNull(
+            notification.bigContentView,
+            notification.contentView,
+            notification.headsUpContentView
+        )
+
+        // Se è ABRP, o se title/text sono vuoti o rappresentano solo una destinazione, estraiamo SEMPRE da RemoteViews
+        val shouldInspectRemoteViews = isAbrp || (title.isEmpty() && text.isEmpty()) || 
+                (allViews.isNotEmpty() && isDestinationOrRouteSummary(title))
+
+        if (shouldInspectRemoteViews && allViews.isNotEmpty()) {
+            val extracted = mutableListOf<String>()
+            for (rv in allViews) {
+                val viewsTexts = extractTextsFromRemoteViews(rv, pkg)
+                for (s in viewsTexts) {
+                    if (!extracted.contains(s)) extracted.add(s)
+                }
             }
-        } else if (text.contains("•") || text.contains("·") || text.contains("min")) {
-            if (remaining.isEmpty()) remaining = text
+            Log.w(TAG, "[$appName] Extracted ${extracted.size} strings from RemoteViews: $extracted")
+
+            if (extracted.isNotEmpty()) {
+                val distCandidates = mutableListOf<String>()
+                val candidateManeuvers = mutableListOf<String>()
+                val candidateRoadNames = mutableListOf<String>()
+
+                for (item in extracted) {
+                    val arrivalMatch = arrivalPatternHelper.find(item)
+                    when {
+                        batteryPatternHelper.matches(item) -> { /* Skip battery */ }
+                        isGenericStatus(item) -> { /* Skip generic status */ }
+                        arrivalMatch != null && eta.isEmpty() -> eta = arrivalMatch.groupValues[1]
+                        etaPatternHelper.matches(item) && eta.isEmpty() -> eta = item
+                        remainingPatternHelper.matches(item) && remaining.isEmpty() -> remaining = item
+                        isDestinationOrRouteSummary(item) -> {
+                            if (destination.isEmpty()) destination = item
+                        }
+                        distPatternHelper.matches(item) -> {
+                            distCandidates.add(item)
+                        }
+                        isManeuverVerb(item) -> {
+                            if (!candidateManeuvers.contains(item)) candidateManeuvers.add(item)
+                        }
+                        else -> {
+                            if (item.length >= 2 && !candidateRoadNames.contains(item)) {
+                                candidateRoadNames.add(item)
+                            }
+                        }
+                    }
+                }
+
+                // Identifica la distanza di manovra rispetto alla distanza di viaggio
+                if (distCandidates.isNotEmpty()) {
+                    // Cerca prima distanze in metri (es. "300 m") - sono sicuramente di manovra
+                    val meterDist = distCandidates.firstOrNull { it.contains("m", ignoreCase = true) && !it.contains("km", ignoreCase = true) }
+                    if (meterDist != null) {
+                        distance = meterDist
+                        // Qualsiasi altra distanza in km può essere la distanza totale
+                        val totalDist = distCandidates.firstOrNull { it.contains("km", ignoreCase = true) }
+                        if (totalDist != null && remaining.isEmpty()) {
+                            remaining = totalDist
+                        }
+                    } else {
+                        // Tutte in km: ordina per valore numerico crescente (la più piccola è la svolta, la più grande è il viaggio)
+                        val sortedDist = distCandidates.sortedBy { parseDistanceStringToMeters(it) }
+                        distance = sortedDist.first()
+                        if (sortedDist.size > 1 && remaining.isEmpty()) {
+                            remaining = sortedDist.last()
+                        }
+                    }
+                }
+
+                // Costruisci l'istruzione di manovra
+                if (candidateManeuvers.isNotEmpty()) {
+                    val maneuver = candidateManeuvers.joinToString(" ")
+                    instruction = if (candidateRoadNames.isNotEmpty()) {
+                        "$maneuver su ${candidateRoadNames.first()}"
+                    } else {
+                        maneuver
+                    }
+                } else if (candidateRoadNames.isNotEmpty()) {
+                    instruction = candidateRoadNames.joinToString(" - ")
+                } else if (distance.isNotEmpty() && !distance.endsWith("km", ignoreCase = true)) {
+                    // C'è una distanza di manovra in metri ma nessun testo: dritto
+                    instruction = "Prosegui dritto"
+                }
+            }
         }
 
-        // Se l'istruzione è un mero stato generico ("Navigazione in corso") e non c'è distanza di manovra,
-        // evitiamo di pusharla come falsa svolta TBT
-        if (isGenericStatus(instruction) && distance.isEmpty()) {
-            Log.d(TAG, "[$appName] Ignored generic status without maneuver distance: '$instruction'")
+        // Fallback su title e text se instruction o distance sono ancora vuoti (es. Google Maps standard)
+        if (instruction.isEmpty() && title.isNotEmpty()) {
+            if (isDestinationOrRouteSummary(title)) {
+                if (destination.isEmpty()) destination = title
+            } else if (distPatternHelper.matches(title)) {
+                if (distance.isEmpty()) distance = title
+                if (instruction.isEmpty() && !isDestinationOrRouteSummary(text)) instruction = text
+            } else {
+                if (instruction.isEmpty()) instruction = title
+            }
+        }
+
+        if (instruction.isEmpty() && text.isNotEmpty()) {
+            if (isDestinationOrRouteSummary(text)) {
+                if (destination.isEmpty()) destination = text
+            } else if (distPatternHelper.matches(text)) {
+                if (distance.isEmpty()) distance = text
+            } else {
+                instruction = text
+            }
+        }
+
+        if (subText.isNotEmpty() && remaining.isEmpty()) {
+            remaining = subText
+            val arrivalMatch = arrivalPatternHelper.find(subText)
+            if (arrivalMatch != null && eta.isEmpty()) {
+                eta = arrivalMatch.groupValues[1]
+            }
+        }
+
+        // Se non abbiamo ancora un'istruzione di svolta ma abbiamo una destinazione e siamo attivi
+        if (instruction.isEmpty() && destination.isNotEmpty()) {
+            Log.d(TAG, "[$appName] Route active towards '$destination' (no active turn maneuver yet)")
+        }
+
+        if (instruction.isEmpty() && destination.isEmpty() && distance.isEmpty()) {
+            Log.d(TAG, "[$appName] Ignored empty nav state")
             return false
         }
+
+        Log.w(TAG, "[$appName] NavParsed -> Instr: '$instruction' | Dist: '$distance' | Dest: '$destination' | Rem: '$remaining' | ETA: '$eta'")
 
         val state = NavState(
             isActive = true,
@@ -224,12 +248,54 @@ class NavNotificationListener : NotificationListenerService() {
             sourceName = appName,
             distance = distance,
             instruction = instruction,
+            destination = destination,
             eta = eta,
             remainingTimeDistance = remaining
         )
 
         NavClusterService.instance?.onNavStateChanged(state)
         return true
+    }
+
+    private fun isDestinationOrRouteSummary(str: String): Boolean {
+        val lower = str.lowercase(java.util.Locale.ITALIAN).trim()
+        if (lower.isEmpty()) return false
+        val isDest = lower.startsWith("verso ") ||
+                lower.startsWith("direzione ") ||
+                lower.startsWith("destinazione") ||
+                lower.startsWith("rotta verso") ||
+                lower.startsWith("arrivo a ") ||
+                lower == "casa" || lower == "lavoro" || lower == "home" || lower == "work"
+        if (!isDest) return false
+        val hasManeuver = listOf(
+            "svolta", "gira", "prendi", "esci", "uscita", "rotonda", "rotatoria",
+            "tieni", "rimani", "continua", "prosegui", "destra", "sinistra"
+        ).any { lower.contains(it) }
+        return !hasManeuver
+    }
+
+    private fun isManeuverVerb(str: String): Boolean {
+        val lower = str.lowercase(java.util.Locale.ITALIAN).trim()
+        return listOf(
+            "svolta", "gira", "prendi", "esci", "uscita", "rotonda", "rotatoria",
+            "tieni", "rimani", "continua", "prosegui", "inversione", "dritto",
+            "destra", "sinistra", "corsia", "rampa", "biforcazione",
+            "turn", "exit", "keep", "roundabout", "continue", "right", "left"
+        ).any { lower.contains(it) }
+    }
+
+    private fun parseDistanceStringToMeters(str: String): Int {
+        return try {
+            val clean = str.lowercase(java.util.Locale.ITALIAN).trim()
+            if (clean.contains("km")) {
+                val num = clean.replace("km", "").replace(",", ".").trim().toFloatOrNull() ?: 1.0f
+                (num * 1000).toInt()
+            } else {
+                clean.replace("m", "").replace(".", "").trim().toIntOrNull() ?: 500
+            }
+        } catch (_: Exception) {
+            500
+        }
     }
 
     private fun extractTextsFromRemoteViews(rv: RemoteViews?, pkg: String, depth: Int = 0): List<String> {

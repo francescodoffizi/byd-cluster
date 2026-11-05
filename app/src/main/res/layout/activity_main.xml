@@ -104,6 +104,16 @@
                         android:textColor="@color/primary" />
                 </LinearLayout>
 
+                <!-- Secure Settings Permission -->
+                <TextView
+                    android:id="@+id/tvSecureSettingsStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Permesso Quadro (WRITE_SECURE_SETTINGS): Non Verificato"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="14sp" />
+
                 <!-- Active Navigation State -->
                 <TextView
                     android:id="@+id/tvNavState"

@@ -217,7 +217,7 @@ class NavClusterService : Service() {
 
     fun onNavStateChanged(state: NavState) {
         currentNavState = state
-        Log.w(TAG, "onNavStateChanged: active=${state.isActive}, mode=$currentMode, instr='${state.instruction}', dist='${state.distance}'")
+        Log.w(TAG, "onNavStateChanged: active=${state.isActive}, mode=$currentMode, instr='${state.instruction}', dist='${state.distance}', dest='${state.destination}'")
 
         if (state.isActive) {
             val targetMode = if (currentMode == ClusterCommBridge.MODE_OFF) ClusterCommBridge.MODE_SEMPLICE else currentMode
@@ -226,8 +226,8 @@ class NavClusterService : Service() {
             }
             clusterBridge.sendTbtInfo(state)
             clusterPresentation?.updateNavState(state)
-            if (state.instruction.isNotEmpty()) {
-                voiceManager.onNavInstruction(state.instruction, state.distance)
+            if (state.instruction.isNotEmpty() || state.destination.isNotEmpty()) {
+                voiceManager.onNavInstruction(state.instruction, state.distance, state.destination)
             }
         } else {
             voiceManager.stop()

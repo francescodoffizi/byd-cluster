@@ -282,16 +282,26 @@ class ClusterCommBridge(private val context: Context) {
         }
 
         val distanceMeters = parseDistanceToMeters(state.distance)
-        val iconId = mapInstructionToIcon(state.instruction)
+        val iconId = if (state.instruction.isNotBlank()) {
+            mapInstructionToIcon(state.instruction)
+        } else {
+            1 // Freccia dritto se siamo in navigazione verso destinazione senza svolta immediata
+        }
         val remainingSecs = parseEtaToSeconds(state.remainingTimeDistance)
         val totalDistMeters = parseTotalDistanceToMeters(state.remainingTimeDistance).takeIf { it > 0 } ?: distanceMeters
+
+        val roadName = when {
+            state.instruction.isNotBlank() -> state.instruction
+            state.destination.isNotBlank() -> state.destination
+            else -> "Navigazione"
+        }
 
         val bundle = Bundle().apply {
             putInt("DataType", DATA_TYPE_NAVI_INFO)
             putInt("NaviSource", 1)
             putInt("NaviIconTbt", iconId)
             putInt("NaviNextRoadDistance", distanceMeters)
-            putString("NaviNextRoadName", state.instruction)
+            putString("NaviNextRoadName", roadName)
             putInt("NaviRoadType", 0)
             putInt("NaviCrossingStatus", 0)
             putInt("NaviNextRoadPrecent", 0)
@@ -302,7 +312,7 @@ class ClusterCommBridge(private val context: Context) {
         }
 
         val sent = dispatchCommand(CMD_NAVI, bundle)
-        Log.w(TAG, "sendTbtInfo: icon=$iconId, dist=${distanceMeters}m, total=${totalDistMeters}m, road='${state.instruction}' -> $sent")
+        Log.w(TAG, "sendTbtInfo: icon=$iconId, dist=${distanceMeters}m, total=${totalDistMeters}m, road='$roadName' -> $sent")
         return sent
     }
 
@@ -346,7 +356,9 @@ class ClusterCommBridge(private val context: Context) {
                 SETTING_NAVI_FOCUS_MAP,
                 focusMap
             )
-            Log.i(TAG, "Settings.Global applied: display_mode=$mode, focus_map=$focusMap")
+            Log.w(TAG, "Settings.Global applied: display_mode=$mode, focus_map=$focusMap")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "CRITICAL: WRITE_SECURE_SETTINGS missing! Esegui via ADB: 'pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS' per consentire il cambio modalità del cruscotto!")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to apply Settings.Global: ${e.message}")
         }
