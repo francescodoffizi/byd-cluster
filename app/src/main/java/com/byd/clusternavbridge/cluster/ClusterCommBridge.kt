@@ -67,7 +67,7 @@ class ClusterCommBridge(private val context: Context) {
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            Log.i(TAG, "Direct connection to ClusterCoreService established (Binder: $service)")
+            Log.w(TAG, "Direct connection to ClusterCoreService established (Binder: $service)")
             directBinder = service
             isBound = true
             try {
@@ -101,7 +101,7 @@ class ClusterCommBridge(private val context: Context) {
                 component = ComponentName(SERVICE_PKG, SERVICE_CLS)
             }
             val bound = context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-            Log.i(TAG, "bindDirectService to $SERVICE_CLS initiated: $bound")
+            Log.w(TAG, "bindDirectService to $SERVICE_CLS initiated: $bound")
         } catch (e: Exception) {
             Log.w(TAG, "bindDirectService error: ${e.message}")
         }
@@ -116,7 +116,7 @@ class ClusterCommBridge(private val context: Context) {
             count++
         }
         if (count > 0) {
-            Log.i(TAG, "Flushed $count pending cluster commands after service connection")
+            Log.w(TAG, "Flushed $count pending cluster commands after service connection")
         }
     }
 
@@ -137,7 +137,7 @@ class ClusterCommBridge(private val context: Context) {
      * Commuta la modalità del cruscotto eseguendo l'handshake completo con QNX
      */
     fun switchClusterMode(mode: Int): Boolean {
-        Log.i(TAG, "switchClusterMode -> from $currentMode to $mode")
+        Log.w(TAG, "switchClusterMode -> from $currentMode to $mode")
         currentMode = mode
         when (mode) {
             MODE_PICCOLO -> {
@@ -191,7 +191,7 @@ class ClusterCommBridge(private val context: Context) {
             putInt("mode", mode)
         }
         val sent = dispatchCommand(CMD_NAVI, bundle)
-        Log.i(TAG, "sendDisplayMode(mode=$mode) dispatched -> $sent")
+        Log.w(TAG, "sendDisplayMode(mode=$mode) dispatched -> $sent")
         return sent
     }
 
@@ -205,7 +205,7 @@ class ClusterCommBridge(private val context: Context) {
             putInt("mapType", mapType)
         }
         val sent = dispatchCommand(CMD_NAVI, bundle)
-        Log.i(TAG, "requestMapFocus(mapType=$mapType) dispatched -> $sent")
+        Log.w(TAG, "requestMapFocus(mapType=$mapType) dispatched -> $sent")
         return sent
     }
 
@@ -219,7 +219,7 @@ class ClusterCommBridge(private val context: Context) {
             putInt("mapType", mapType)
         }
         val sent = dispatchCommand(CMD_NAVI, bundle)
-        Log.i(TAG, "abandonMapFocus(mapType=$mapType) dispatched -> $sent")
+        Log.w(TAG, "abandonMapFocus(mapType=$mapType) dispatched -> $sent")
         return sent
     }
 
@@ -235,7 +235,7 @@ class ClusterCommBridge(private val context: Context) {
             putInt("naviPresentationState", state)
         }
         val sent = dispatchCommand(CMD_NAVI, bundle)
-        Log.i(TAG, "sendNaviPresentationState(mapType=$mapType, state=$state) dispatched -> $sent")
+        Log.w(TAG, "sendNaviPresentationState(mapType=$mapType, state=$state) dispatched -> $sent")
         return sent
     }
 
@@ -250,7 +250,7 @@ class ClusterCommBridge(private val context: Context) {
             putInt("NaviState", 2) // 2: Navigation started
         }
         val sent = dispatchCommand(CMD_NAVI, bundle)
-        Log.i(TAG, "startTbtMode dispatched -> $sent")
+        Log.w(TAG, "startTbtMode dispatched -> $sent")
         return sent
     }
 
@@ -265,7 +265,7 @@ class ClusterCommBridge(private val context: Context) {
             putInt("NaviState", 0) // 0: Not navigating
         }
         val sent = dispatchCommand(CMD_NAVI, bundle)
-        Log.i(TAG, "stopTbtMode dispatched -> $sent")
+        Log.w(TAG, "stopTbtMode dispatched -> $sent")
         return sent
     }
 
@@ -284,6 +284,7 @@ class ClusterCommBridge(private val context: Context) {
         val distanceMeters = parseDistanceToMeters(state.distance)
         val iconId = mapInstructionToIcon(state.instruction)
         val remainingSecs = parseEtaToSeconds(state.remainingTimeDistance)
+        val totalDistMeters = parseTotalDistanceToMeters(state.remainingTimeDistance).takeIf { it > 0 } ?: distanceMeters
 
         val bundle = Bundle().apply {
             putInt("DataType", DATA_TYPE_NAVI_INFO)
@@ -294,21 +295,21 @@ class ClusterCommBridge(private val context: Context) {
             putInt("NaviRoadType", 0)
             putInt("NaviCrossingStatus", 0)
             putInt("NaviNextRoadPrecent", 0)
-            putInt("NaviDistanceToDest", distanceMeters)
-            putInt("NaviDistanceToDestUnit", 0) // 0: KM
+            putInt("NaviDistanceToDest", totalDistMeters)
+            putInt("NaviDistanceToDestUnit", if (totalDistMeters >= 1000) 0 else 2) // 0: KM, 2: M
             putInt("NaviToDestTime", remainingSecs)
             putInt("NaviState", 2)
         }
 
         val sent = dispatchCommand(CMD_NAVI, bundle)
-        Log.d(TAG, "sendTbtInfo: icon=$iconId, dist=${distanceMeters}m, road='${state.instruction}' -> $sent")
+        Log.w(TAG, "sendTbtInfo: icon=$iconId, dist=${distanceMeters}m, total=${totalDistMeters}m, road='${state.instruction}' -> $sent")
         return sent
     }
 
     private fun dispatchCommand(commandId: Int, bundle: Bundle): Boolean {
         val binder = directBinder
         if (binder == null) {
-            Log.i(TAG, "dispatchCommand queued (commandId=$commandId): binder not yet connected, queuing")
+            Log.w(TAG, "dispatchCommand queued (commandId=$commandId): binder not yet connected, queuing")
             pendingCommands.offer(Pair(commandId, Bundle(bundle)))
             bindDirectService()
             return true
@@ -363,6 +364,23 @@ class ClusterCommBridge(private val context: Context) {
                 value.toInt()
             }
         } catch (e: Exception) {
+            0
+        }
+    }
+
+    fun parseTotalDistanceToMeters(str: String): Int {
+        if (str.isBlank()) return 0
+        return try {
+            val distRegex = Regex("(?i)([0-9]+(?:[.,][0-9]+)?)\\s*(km|m)\\b").find(str)
+            if (distRegex != null) {
+                val numStr = distRegex.groupValues[1].replace(",", ".")
+                val unit = distRegex.groupValues[2].lowercase()
+                val num = numStr.toDoubleOrNull() ?: 0.0
+                if (unit == "km") (num * 1000).toInt() else num.toInt()
+            } else {
+                0
+            }
+        } catch (_: Exception) {
             0
         }
     }

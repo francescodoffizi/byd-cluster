@@ -81,7 +81,7 @@ class NavClusterService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        Log.i(TAG, "NavClusterService onCreate (v1.5.0 Multi-Modale + TTS Voice)")
+        Log.w(TAG, "NavClusterService onCreate (v1.5.2 Multi-Modale + TTS Voice)")
 
         clusterBridge = ClusterCommBridge(this)
         clusterBridge.bindDirectService()
@@ -153,7 +153,7 @@ class NavClusterService : Service() {
     }
 
     fun setMode(mode: Int) {
-        Log.i(TAG, "Setting mode to $mode")
+        Log.w(TAG, "Setting mode to $mode")
         currentMode = mode
         clusterBridge.switchClusterMode(mode)
 
@@ -217,11 +217,12 @@ class NavClusterService : Service() {
 
     fun onNavStateChanged(state: NavState) {
         currentNavState = state
-        Log.i(TAG, "onNavStateChanged: active=${state.isActive}, mode=$currentMode, instr='${state.instruction}'")
+        Log.w(TAG, "onNavStateChanged: active=${state.isActive}, mode=$currentMode, instr='${state.instruction}', dist='${state.distance}'")
 
         if (state.isActive) {
-            if (currentMode == ClusterCommBridge.MODE_OFF) {
-                setMode(ClusterCommBridge.MODE_SEMPLICE)
+            val targetMode = if (currentMode == ClusterCommBridge.MODE_OFF) ClusterCommBridge.MODE_SEMPLICE else currentMode
+            if (clusterBridge.currentMode == ClusterCommBridge.MODE_OFF || currentMode == ClusterCommBridge.MODE_OFF) {
+                setMode(targetMode)
             }
             clusterBridge.sendTbtInfo(state)
             clusterPresentation?.updateNavState(state)

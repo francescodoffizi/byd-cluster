@@ -25,7 +25,7 @@ class NavNotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        Log.i(TAG, "NotificationListener connected! Ensuring NavClusterService is active...")
+        Log.w(TAG, "NotificationListener connected! Ensuring NavClusterService is active...")
         if (NavClusterService.instance == null) {
             NavClusterService.startService(this)
         }
@@ -94,19 +94,62 @@ class NavNotificationListener : NotificationListenerService() {
 
         // Se title e text sono vuoti, ispezioniamo i RemoteViews personalizzati (cruciale per ABRP com.iternio.abrpapp)
         if (title.isEmpty() && text.isEmpty()) {
-            val remoteViews = notification.bigContentView ?: notification.contentView
-            val extracted = extractTextsFromRemoteViews(remoteViews)
-            Log.d(TAG, "[$pkg] Extracted ${extracted.size} strings from RemoteViews: $extracted")
+            val allViews = listOfNotNull(
+                notification.bigContentView,
+                notification.contentView,
+                notification.headsUpContentView
+            )
+            val extracted = mutableListOf<String>()
+            for (rv in allViews) {
+                val viewsTexts = extractTextsFromRemoteViews(rv, pkg)
+                for (s in viewsTexts) {
+                    if (!extracted.contains(s)) extracted.add(s)
+                }
+            }
+            Log.w(TAG, "[$pkg] Extracted ${extracted.size} strings from RemoteViews: $extracted")
+
             if (extracted.isNotEmpty()) {
                 val distPatternHelper = Regex("^[~]?[\\s]*[0-9]+(?:[.,][0-9]+)?\\s*(m|km|mi|ft)\\.?$", RegexOption.IGNORE_CASE)
-                val distIdx = extracted.indexOfFirst { distPatternHelper.matches(it) }
-                if (distIdx >= 0) {
-                    title = extracted[distIdx]
-                    val other = extracted.filterIndexed { i, _ -> i != distIdx }
-                    text = other.firstOrNull { !isGenericStatus(it) } ?: other.firstOrNull() ?: ""
-                } else {
-                    title = extracted.firstOrNull { !isGenericStatus(it) } ?: extracted[0]
-                    text = if (extracted.size > 1) extracted[1] else ""
+                val etaPatternHelper = Regex("^(?:[01]?[0-9]|2[0-3]):[0-5][0-9]$")
+                val arrivalPatternHelper = Regex("(?i)(?:arrivo|eta|arrival)\\s*([0-9]{1,2}[:.][0-9]{2})")
+                val remainingPatternHelper = Regex("(?i)(\\d+\\s*(?:min|h|ore|km)\\b.*[•·].*|.*[•·].*\\b(?:min|km)\\b|\\d+\\s*min\\b)")
+                val batteryPatternHelper = Regex("^[0-9]{1,3}\\s*%$")
+
+                var foundDist = ""
+                var foundEta = ""
+                var foundRemaining = ""
+                val candidateInstructions = mutableListOf<String>()
+
+                for (item in extracted) {
+                    val arrivalMatch = arrivalPatternHelper.find(item)
+                    when {
+                        distPatternHelper.matches(item) && foundDist.isEmpty() -> foundDist = item
+                        etaPatternHelper.matches(item) && foundEta.isEmpty() -> foundEta = item
+                        arrivalMatch != null && foundEta.isEmpty() -> foundEta = arrivalMatch.groupValues[1]
+                        remainingPatternHelper.matches(item) && foundRemaining.isEmpty() -> foundRemaining = item
+                        batteryPatternHelper.matches(item) -> { /* Skip battery % like 45% */ }
+                        isGenericStatus(item) -> { /* Skip generic status */ }
+                        else -> {
+                            if (item.length >= 2 && !candidateInstructions.contains(item)) {
+                                candidateInstructions.add(item)
+                            }
+                        }
+                    }
+                }
+
+                if (foundDist.isNotEmpty()) {
+                    title = foundDist
+                    text = candidateInstructions.joinToString(" - ")
+                } else if (candidateInstructions.isNotEmpty()) {
+                    title = ""
+                    text = candidateInstructions.joinToString(" - ")
+                }
+
+                if (foundEta.isNotEmpty()) {
+                    extras.putString("byd_extracted_eta", foundEta)
+                }
+                if (foundRemaining.isNotEmpty()) {
+                    extras.putString("byd_extracted_remaining", foundRemaining)
                 }
             }
         }
@@ -122,7 +165,7 @@ class NavNotificationListener : NotificationListenerService() {
             return false
         }
 
-        Log.d(TAG, "[$appName] Ongoing nav - Title: '$title' | Text: '$text' | SubText: '$subText'")
+        Log.w(TAG, "[$appName] Ongoing nav - Title: '$title' | Text: '$text' | SubText: '$subText'")
 
         // Helper regex per identificare stringhe di distanza pura (es. '22 km', '350 m', '1.5 mi')
         val distPattern = Regex("^[~]?[\\s]*[0-9]+(?:[.,][0-9]+)?\\s*(m|km|mi|ft)\\.?$", RegexOption.IGNORE_CASE)
@@ -153,8 +196,8 @@ class NavNotificationListener : NotificationListenerService() {
         }
 
         // Parsing avanzato di ETA e tempo/distanza residua
-        var eta = ""
-        var remaining = ""
+        var eta = extras.getString("byd_extracted_eta", "")
+        var remaining = extras.getString("byd_extracted_remaining", "")
 
         if (subText.isNotEmpty()) {
             remaining = subText
@@ -165,7 +208,7 @@ class NavNotificationListener : NotificationListenerService() {
                 subText
             }
         } else if (text.contains("•") || text.contains("·") || text.contains("min")) {
-            remaining = text
+            if (remaining.isEmpty()) remaining = text
         }
 
         // Se l'istruzione è un mero stato generico ("Navigazione in corso") e non c'è distanza di manovra,
@@ -189,38 +232,45 @@ class NavNotificationListener : NotificationListenerService() {
         return true
     }
 
-    private fun extractTextsFromRemoteViews(rv: RemoteViews?): List<String> {
-        rv ?: return emptyList()
+    private fun extractTextsFromRemoteViews(rv: RemoteViews?, pkg: String, depth: Int = 0): List<String> {
+        if (rv == null || depth > 5) return emptyList()
         val texts = mutableListOf<String>()
 
-        // 1. Reflection sicura sui campi mActions del RemoteViews (legge direttamente dal Parcel senza dipendere da risorse esterne)
+        // 1. Reflection ricorsiva sui campi mActions del RemoteViews (naviga anche i nestedViews di ViewGroupActionAdd)
         try {
-            val field = rv.javaClass.getDeclaredField("mActions")
-            field.isAccessible = true
-            val actions = field.get(rv) as? List<*>
-            if (actions != null) {
-                for (action in actions) {
-                    action ?: continue
-                    for (f in action.javaClass.declaredFields) {
-                        f.isAccessible = true
-                        val value = f.get(action)
-                        if (value is CharSequence) {
-                            val str = value.toString().trim()
-                            if (str.isNotEmpty() && !texts.contains(str) && str.length < 200) {
-                                texts.add(str)
-                            }
-                        }
+            var currentClass: Class<*>? = rv.javaClass
+            var mActionsField: java.lang.reflect.Field? = null
+            while (currentClass != null && mActionsField == null) {
+                try {
+                    mActionsField = currentClass.getDeclaredField("mActions")
+                } catch (_: NoSuchFieldException) {
+                    currentClass = currentClass.superclass
+                }
+            }
+
+            if (mActionsField != null) {
+                mActionsField.isAccessible = true
+                val actions = mActionsField.get(rv) as? List<*>
+                if (actions != null) {
+                    for (action in actions) {
+                        action ?: continue
+                        inspectActionObject(action, pkg, depth + 1, texts)
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.d(TAG, "extractTextsFromRemoteViews reflection: ${e.message}")
+            Log.d(TAG, "extractTextsFromRemoteViews reflection error: ${e.message}")
         }
 
-        // 2. Fallback con inflazione in memoria
-        if (texts.isEmpty()) {
+        // 2. Fallback: inflazione reale in memoria con il package context corretto dell'applicazione sorgente
+        if (texts.isEmpty() && depth == 0) {
             try {
-                val view = rv.apply(this, null)
+                val targetContext = try {
+                    createPackageContext(pkg, android.content.Context.CONTEXT_RESTRICTED or android.content.Context.CONTEXT_IGNORE_SECURITY)
+                } catch (_: Exception) {
+                    this
+                }
+                val view = rv.apply(targetContext, null)
                 extractTextsFromView(view, texts)
             } catch (e: Exception) {
                 Log.d(TAG, "extractTextsFromRemoteViews apply failed: ${e.message}")
@@ -230,10 +280,69 @@ class NavNotificationListener : NotificationListenerService() {
         return texts
     }
 
+    private fun inspectActionObject(obj: Any, pkg: String, depth: Int, out: MutableList<String>) {
+        if (depth > 5) return
+        var clazz: Class<*>? = obj.javaClass
+        while (clazz != null && clazz != Any::class.java) {
+            for (f in clazz.declaredFields) {
+                if (f.name == "methodName" || f.name == "mPackage" || f.name == "packageName") continue
+                try {
+                    f.isAccessible = true
+                    val value = f.get(obj) ?: continue
+                    when (value) {
+                        is RemoteViews -> {
+                            val nested = extractTextsFromRemoteViews(value, pkg, depth + 1)
+                            for (s in nested) {
+                                if (!out.contains(s)) out.add(s)
+                            }
+                        }
+                        is CharSequence -> {
+                            val str = value.toString().trim()
+                            if (isValidUserText(str) && !out.contains(str)) {
+                                out.add(str)
+                            }
+                        }
+                        is Collection<*> -> {
+                            for (item in value) {
+                                if (item is RemoteViews) {
+                                    val nested = extractTextsFromRemoteViews(item, pkg, depth + 1)
+                                    for (s in nested) {
+                                        if (!out.contains(s)) out.add(s)
+                                    }
+                                } else if (item is CharSequence) {
+                                    val str = item.toString().trim()
+                                    if (isValidUserText(str) && !out.contains(str)) {
+                                        out.add(str)
+                                    }
+                                }
+                            }
+                        }
+                        is Array<*> -> {
+                            for (item in value) {
+                                if (item is RemoteViews) {
+                                    val nested = extractTextsFromRemoteViews(item, pkg, depth + 1)
+                                    for (s in nested) {
+                                        if (!out.contains(s)) out.add(s)
+                                    }
+                                } else if (item is CharSequence) {
+                                    val str = item.toString().trim()
+                                    if (isValidUserText(str) && !out.contains(str)) {
+                                        out.add(str)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+            clazz = clazz.superclass
+        }
+    }
+
     private fun extractTextsFromView(view: View, out: MutableList<String>) {
         if (view is TextView) {
             val t = view.text?.toString()?.trim()
-            if (!t.isNullOrEmpty() && !out.contains(t) && t.length < 200) {
+            if (!t.isNullOrEmpty() && isValidUserText(t) && !out.contains(t)) {
                 out.add(t)
             }
         } else if (view is ViewGroup) {
@@ -241,6 +350,18 @@ class NavNotificationListener : NotificationListenerService() {
                 extractTextsFromView(view.getChildAt(i), out)
             }
         }
+    }
+
+    private fun isValidUserText(str: String): Boolean {
+        if (str.isEmpty() || str.length > 200) return false
+        // Escludi nomi di metodi interni Android o azioni Reflection
+        if (str.startsWith("set") && str.length > 3 && str[3].isUpperCase()) return false
+        if (str.startsWith("android.") || str.startsWith("com.android.") || str.startsWith("androidx.")) return false
+        if (str.equals("CharSequence", ignoreCase = true) || str.equals("String", ignoreCase = true)) return false
+        // Escludi pulsanti di notifica standard come 'Fine della navigazione'
+        val lower = str.lowercase()
+        if (lower == "fine della navigazione" || lower == "interrompi" || lower == "termina" || lower == "chiudi") return false
+        return true
     }
 
     private fun isGenericStatus(text: String): Boolean {

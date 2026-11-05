@@ -11,8 +11,8 @@ android {
         applicationId = "com.byd.clusternavbridge"
         minSdk = 29
         targetSdk = 30
-        versionCode = 8
-        versionName = "1.5.1"
+        versionCode = 9
+        versionName = "1.5.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

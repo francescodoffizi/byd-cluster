@@ -38,9 +38,6 @@ class VoiceGuidanceManager(
             "ricerca segnale gps",
             "in attesa del segnale",
             "in attesa di segnale",
-            "destinazione raggiunta",
-            "sei arrivato",
-            "sei arrivata",
             "percorso aggiornato"
         )
     }
@@ -220,10 +217,11 @@ class VoiceGuidanceManager(
 
     private fun determineStage(distanceMeters: Int): Int {
         return when {
-            distanceMeters in 1..50 -> 3 // Svolta imminente
-            distanceMeters in 51..300 -> 2 // Avvicinamento
-            distanceMeters > 300 -> 1 // Preavviso
-            else -> 1 // Non specificata o 0, non trattare come svolta imminente
+            distanceMeters in 1..60 -> 4     // Svolta imminente (Ora...)
+            distanceMeters in 61..350 -> 3   // Avvicinamento finale (tra 200 metri...)
+            distanceMeters in 351..1200 -> 2 // Preavviso medio (tra 500 metri...)
+            distanceMeters > 1200 -> 1       // Preavviso lungo (tra 2 chilometri...)
+            else -> 0
         }
     }
 
@@ -233,15 +231,19 @@ class VoiceGuidanceManager(
             .trim()
 
         return when (stage) {
-            3 -> {
+            4 -> {
                 if (cleanInstr.startsWith("tra", ignoreCase = true)) {
                     cleanInstr
                 } else {
                     "Ora, $cleanInstr"
                 }
             }
-            2 -> {
+            3 -> {
                 val roundDist = (distanceMeters / 50) * 50
+                if (roundDist > 0) "Tra $roundDist metri, $cleanInstr" else cleanInstr
+            }
+            2 -> {
+                val roundDist = (distanceMeters / 100) * 100
                 if (roundDist > 0) "Tra $roundDist metri, $cleanInstr" else cleanInstr
             }
             1 -> {
