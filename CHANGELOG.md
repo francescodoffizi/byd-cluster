@@ -4,6 +4,23 @@ Tutte le modifiche rilevanti a questo progetto saranno documentate in questo fil
 
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/).
 
+## [1.5.2] - 2026-11-05
+
+### Modificato & Corretto (Task #697 - Fix ABRP RemoteViews, Handshake TBT QNX & Voce Multi-Stadio)
+- **Parser Notifiche ABRP Custom (Glance / RemoteViews Reflection)**:
+  - In `NavNotificationListener.kt`, implementata esplorazione ricorsiva approfondita dei `ViewGroupActionAdd` e dei `mNestedViews` generati dalla libreria Jetpack Glance di ABRP (`com.iternio.abrpapp`).
+  - Filtrati rigorosamente tutti i nomi dei metodi interni reflection (`methodName`, `setInflatedId`, `setLayoutResource`, `setVisibility`, `setGravity`, `setText`, `setTextColor`, `setHeight`, `setImageIcon`, `setImageAlpha`, `setAdjustViewBounds`, `setImageResource`), i pulsanti azione ("Fine della navigazione") e metadati interni.
+  - Isolati con precisione i campi utili: titolo percorso ("Viaggio verso Lavoro"), orario di arrivo stimato ("Arrivo 10:29"), distanza residua totale ("3 min · 2 km") e manovre di svolta.
+- **Handshake Automatico Cluster Display Centrale (SomeIp / QNX)**:
+  - In `NavClusterService.kt`, corretto l'aggancio automatico della modalità cluster: all'arrivo del primo stato di navigazione attivo se il bridge si trova in `MODE_OFF`, forza la transizione a `MODE_SEMPLICE`.
+  - In `ClusterCommBridge.kt`, invio sequenziale di `display_mode=2` e `focus_map=0` in `Settings.Global`, `abandonMapFocus(1)`, `sendNaviPresentationState(1, MAP_STATE_SIMPLE_OPEN)` e `startTbtMode()`, consentendo all'adapter SomeIP Neusoft (`DataType: 15` con `NaviTbtSwitch = 1`) di impostare `mDisplayResult = 2`, prerequisito fondamentale affinché QNX accetti i pacchetti TBT (`DataType: 16`) e visualizzi frecce e distanze sul display centrale.
+  - Implementato calcolo automatico della distanza totale residua (`NaviDistanceToDest` e `NaviDistanceToDestUnit`: 0 per km, 2 per m) a partire dalle stringhe di stato estratti da ABRP/Maps.
+- **Guida Vocale Multi-Stadio Piper TTS**:
+  - In `VoiceGuidanceManager.kt`, rimossa la soppressione delle frasi di arrivo per consentire l'annuncio del traguardo a destinazione.
+  - Implementata soglia multi-stadio basata su distanze scalari (Stage 4 imminente 1-60m "Ora...", Stage 3 61-350m, Stage 2 351-1200m, Stage 1 >1200m).
+- **Logcat Operativo DiLink**:
+  - Promossi a `Log.w` tutti gli eventi critici di estrazione, instradamento cluster IPC e sintesi vocale per renderli immediatamente visibili nel logcat di produzione DiLink senza abilitare proprietà di debug di sistema.
+
 ## [1.5.1] - 2026-11-04
 
 ### Modificato & Corretto (Task #695 - Fix TBT, Parser ABRP & Surface HDMI)
