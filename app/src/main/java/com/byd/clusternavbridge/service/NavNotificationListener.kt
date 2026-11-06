@@ -10,6 +10,13 @@ import android.view.ViewGroup
 import android.widget.RemoteViews
 import android.widget.TextView
 import com.byd.clusternavbridge.model.NavState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import java.util.Collections
+import java.util.IdentityHashMap
 
 class NavNotificationListener : NotificationListenerService() {
 
@@ -23,13 +30,23 @@ class NavNotificationListener : NotificationListenerService() {
         )
     }
 
+    private val listenerJob = SupervisorJob()
+    private val listenerScope = CoroutineScope(Dispatchers.Default + listenerJob)
+
+    override fun onDestroy() {
+        super.onDestroy()
+        listenerScope.cancel()
+    }
+
     override fun onListenerConnected() {
         super.onListenerConnected()
         Log.w(TAG, "NotificationListener connected! Ensuring NavClusterService is active...")
         if (NavClusterService.instance == null) {
             NavClusterService.startService(this)
         }
-        checkActiveNotifications()
+        listenerScope.launch {
+            checkActiveNotifications()
+        }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -39,7 +56,9 @@ class NavNotificationListener : NotificationListenerService() {
             if (NavClusterService.instance == null) {
                 NavClusterService.startService(this)
             }
-            processNotification(sbn)
+            listenerScope.launch {
+                processNotification(sbn)
+            }
         }
     }
 
@@ -48,10 +67,12 @@ class NavNotificationListener : NotificationListenerService() {
         sbn ?: return
         if (sbn.packageName in TARGET_PACKAGES) {
             Log.i(TAG, "Nav notification removed from ${sbn.packageName}")
-            val activeState = NavClusterService.instance?.currentNavState
-            if (activeState?.sourcePackage == sbn.packageName) {
-                // Check if another target package is still navigating
-                checkActiveNotifications()
+            listenerScope.launch {
+                val activeState = NavClusterService.instance?.currentNavState
+                if (activeState?.sourcePackage == sbn.packageName) {
+                    // Check if another target package is still navigating
+                    checkActiveNotifications()
+                }
             }
         }
     }
@@ -299,10 +320,12 @@ class NavNotificationListener : NotificationListenerService() {
     }
 
     private fun extractTextsFromRemoteViews(rv: RemoteViews?, pkg: String, depth: Int = 0): List<String> {
-        if (rv == null || depth > 5) return emptyList()
+        if (rv == null || depth > 2) return emptyList()
         val texts = mutableListOf<String>()
+        val visited = Collections.newSetFromMap(IdentityHashMap<Any, Boolean>())
+        visited.add(rv)
 
-        // 1. Reflection ricorsiva sui campi mActions del RemoteViews (naviga anche i nestedViews di ViewGroupActionAdd)
+        // 1. Reflection chirurgica sui campi mActions del RemoteViews
         try {
             var currentClass: Class<*>? = rv.javaClass
             var mActionsField: java.lang.reflect.Field? = null
@@ -320,7 +343,8 @@ class NavNotificationListener : NotificationListenerService() {
                 if (actions != null) {
                     for (action in actions) {
                         action ?: continue
-                        inspectActionObject(action, pkg, depth + 1, texts)
+                        if (!visited.add(action)) continue
+                        inspectAction(action, pkg, depth + 1, texts, visited)
                     }
                 }
             }
@@ -328,7 +352,7 @@ class NavNotificationListener : NotificationListenerService() {
             Log.d(TAG, "extractTextsFromRemoteViews reflection error: ${e.message}")
         }
 
-        // 2. Fallback: inflazione reale in memoria con il package context corretto dell'applicazione sorgente
+        // 2. Fallback: inflazione reale in memoria con il package context corretto solo se depth == 0 e nessun testo trovato
         if (texts.isEmpty() && depth == 0) {
             try {
                 val targetContext = try {
@@ -346,15 +370,75 @@ class NavNotificationListener : NotificationListenerService() {
         return texts
     }
 
-    private fun inspectActionObject(obj: Any, pkg: String, depth: Int, out: MutableList<String>) {
-        if (depth > 5) return
-        var clazz: Class<*>? = obj.javaClass
+    private fun inspectAction(action: Any, pkg: String, depth: Int, out: MutableList<String>, visited: MutableSet<Any>) {
+        if (depth > 2) return
+        val actionClass = action.javaClass
+        val className = actionClass.simpleName
+
+        // A. Gestione mirata ReflectionAction (setText, setContentDescription, ecc.)
+        if (className.contains("ReflectionAction")) {
+            try {
+                var methodField: java.lang.reflect.Field? = null
+                var valueField: java.lang.reflect.Field? = null
+                var c: Class<*>? = actionClass
+                while (c != null && (methodField == null || valueField == null)) {
+                    if (methodField == null) {
+                        try { methodField = c.getDeclaredField("methodName") } catch (_: Exception) {}
+                    }
+                    if (valueField == null) {
+                        try { valueField = c.getDeclaredField("value") } catch (_: Exception) {}
+                    }
+                    c = c.superclass
+                }
+
+                val methodName = methodField?.apply { isAccessible = true }?.get(action) as? String
+                if (methodName == "setText" || methodName == "setContentDescription") {
+                    val value = valueField?.apply { isAccessible = true }?.get(action)
+                    if (value is CharSequence) {
+                        val str = value.toString().trim()
+                        if (isValidUserText(str) && !out.contains(str)) {
+                            out.add(str)
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+            return
+        }
+
+        // B. Gestione mirata ViewGroupActionAdd (aggiunta di RemoteViews figli)
+        if (className.contains("ViewGroupActionAdd")) {
+            try {
+                var nestedField: java.lang.reflect.Field? = null
+                var c: Class<*>? = actionClass
+                while (c != null && nestedField == null) {
+                    try { nestedField = c.getDeclaredField("mNestedViews") } catch (_: Exception) {}
+                    c = c.superclass
+                }
+                val nestedRv = nestedField?.apply { isAccessible = true }?.get(action) as? RemoteViews
+                if (nestedRv != null && visited.add(nestedRv)) {
+                    val nestedTexts = extractTextsFromRemoteViews(nestedRv, pkg, depth + 1)
+                    for (s in nestedTexts) {
+                        if (!out.contains(s)) out.add(s)
+                    }
+                }
+            } catch (_: Exception) {}
+            return
+        }
+
+        // C. Fallback controllato per altre Action: blocco categorico di puntatori outer-class (this$0) e campi sintetici
+        var clazz: Class<*>? = actionClass
         while (clazz != null && clazz != Any::class.java) {
             for (f in clazz.declaredFields) {
-                if (f.name == "methodName" || f.name == "mPackage" || f.name == "packageName") continue
+                val name = f.name
+                if (f.isSynthetic || name.startsWith("this$") || name == "mActions" ||
+                    name == "methodName" || name == "mPackage" || name == "packageName" ||
+                    name == "bitmap" || name == "mBitmap" || name == "intent" || name == "mIntent") {
+                    continue
+                }
                 try {
                     f.isAccessible = true
-                    val value = f.get(obj) ?: continue
+                    val value = f.get(action) ?: continue
+                    if (!visited.add(value)) continue
                     when (value) {
                         is RemoteViews -> {
                             val nested = extractTextsFromRemoteViews(value, pkg, depth + 1)
@@ -370,21 +454,8 @@ class NavNotificationListener : NotificationListenerService() {
                         }
                         is Collection<*> -> {
                             for (item in value) {
-                                if (item is RemoteViews) {
-                                    val nested = extractTextsFromRemoteViews(item, pkg, depth + 1)
-                                    for (s in nested) {
-                                        if (!out.contains(s)) out.add(s)
-                                    }
-                                } else if (item is CharSequence) {
-                                    val str = item.toString().trim()
-                                    if (isValidUserText(str) && !out.contains(str)) {
-                                        out.add(str)
-                                    }
-                                }
-                            }
-                        }
-                        is Array<*> -> {
-                            for (item in value) {
+                                item ?: continue
+                                if (!visited.add(item)) continue
                                 if (item is RemoteViews) {
                                     val nested = extractTextsFromRemoteViews(item, pkg, depth + 1)
                                     for (s in nested) {

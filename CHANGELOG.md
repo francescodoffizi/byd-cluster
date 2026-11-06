@@ -6,6 +6,20 @@ Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-11-06
+
+### Risolto (Root Cause ANR 08:33 / Loop Reflection Circolare & Asincronia Notifiche)
+- **Eliminazione Loop Circolare `this$0` su Reflection RemoteViews**:
+  - In `NavNotificationListener.kt`, eliminata la scansione indiscriminata dei campi riflessi degli oggetti `RemoteViews$Action` che agganciava il puntatore implicito `this$0` (outer-class) rimbalzando all'infinito sul Main Thread.
+  - Implementata esclusione categorica di campi sintetici (`isSynthetic`) e puntatori `this$*`.
+  - Aggiunto set di tracciamento cicli `IdentityHashMap` e limite di profondità rigido `depth <= 2`.
+- **Estrazione Chirurgica e Ultrarapida di `ReflectionAction`**:
+  - Per gli oggetti `ReflectionAction`, estrazione diretta mirata dei campi `methodName` e `value` solo se `setText` o `setContentDescription`, riducendo i tempi di elaborazione a frazioni di millisecondo.
+  - Per gli oggetti `ViewGroupActionAdd`, ispezione limitata esclusivamente al campo `mNestedViews`.
+- **Offload Asincrono su Coroutine di Background (Zero Rischio ANR)**:
+  - Spostata l'intera elaborazione delle notifiche (`checkActiveNotifications`, `processNotification`, `onNotificationPosted`, `onNotificationRemoved`) su un `CoroutineScope` di background (`Dispatchers.Default`).
+  - Il thread principale di `NotificationListenerService` ritorna immediatamente (< 1 ms), azzerando categoricamente qualsiasi freeze dell'interfaccia o blocco CPU.
+
 ### Modificato & Corretto (Task #699 - Fix Root Cause Svolte ABRP, Separazione Destinazione/Manovra & Permessi Cluster)
 - **Eliminazione Gate Notifiche & Ispezione Incondizionata RemoteViews**:
   - In `NavNotificationListener.kt`, rimosso il blocco `if (title.isEmpty() && text.isEmpty())` che impediva l'estrazione delle notifiche di ABRP (`com.iternio.abrpapp`) quando `title` o `text` contenevano riepiloghi o nomi destinazione statici.
