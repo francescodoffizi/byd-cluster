@@ -9,7 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -69,6 +71,7 @@ class NavClusterService : Service() {
     private lateinit var clusterBridge: ClusterCommBridge
     private lateinit var powerMonitor: VehiclePowerMonitor
     private lateinit var voiceManager: VoiceGuidanceManager
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var floatingPill: FloatingPillView? = null
     private var clusterPresentation: ClusterPresentation? = null
 
@@ -87,20 +90,24 @@ class NavClusterService : Service() {
         clusterBridge.bindDirectService()
 
         voiceManager = VoiceGuidanceManager(this) { isMuted ->
-            floatingPill?.updateVoiceMute(isMuted)
+            mainHandler.post {
+                floatingPill?.updateVoiceMute(isMuted)
+            }
         }
 
         powerMonitor = VehiclePowerMonitor(this) { isPowered ->
             Log.i(TAG, "Vehicle power state updated: isPowered=$isPowered")
-            if (!isPowered) {
-                closeClusterPresentation()
-                clusterBridge.switchClusterMode(ClusterCommBridge.MODE_OFF)
-                voiceManager.stop()
-                floatingPill?.hide()
-            } else {
-                initFloatingPill()
-                if (currentNavState.isActive) {
-                    setMode(currentMode)
+            mainHandler.post {
+                if (!isPowered) {
+                    closeClusterPresentation()
+                    clusterBridge.switchClusterMode(ClusterCommBridge.MODE_OFF)
+                    voiceManager.stop()
+                    floatingPill?.hide()
+                } else {
+                    initFloatingPill()
+                    if (currentNavState.isActive) {
+                        setMode(currentMode)
+                    }
                 }
             }
         }
@@ -153,6 +160,10 @@ class NavClusterService : Service() {
     }
 
     fun setMode(mode: Int) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { setMode(mode) }
+            return
+        }
         Log.w(TAG, "Setting mode to $mode")
         currentMode = mode
         clusterBridge.switchClusterMode(mode)
@@ -222,19 +233,19 @@ class NavClusterService : Service() {
         if (state.isActive) {
             val targetMode = if (currentMode == ClusterCommBridge.MODE_OFF) ClusterCommBridge.MODE_SEMPLICE else currentMode
             if (clusterBridge.currentMode == ClusterCommBridge.MODE_OFF || currentMode == ClusterCommBridge.MODE_OFF) {
-                setMode(targetMode)
+                mainHandler.post { setMode(targetMode) }
             }
             clusterBridge.sendTbtInfo(state)
-            clusterPresentation?.updateNavState(state)
+            mainHandler.post { clusterPresentation?.updateNavState(state) }
             if (state.instruction.isNotEmpty() || state.destination.isNotEmpty()) {
                 voiceManager.onNavInstruction(state.instruction, state.distance, state.destination)
             }
         } else {
             voiceManager.stop()
-            setMode(ClusterCommBridge.MODE_OFF)
+            mainHandler.post { setMode(ClusterCommBridge.MODE_OFF) }
         }
 
-        floatingPill?.updateNavState(state)
+        mainHandler.post { floatingPill?.updateNavState(state) }
     }
 
     override fun onDestroy() {

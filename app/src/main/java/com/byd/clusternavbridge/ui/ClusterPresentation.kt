@@ -9,6 +9,8 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Display
 import android.view.Surface
@@ -49,6 +51,7 @@ class ClusterPresentation(
     private var locationManager: LocationManager? = null
     private var lastLocation: Location? = null
     private var isFirstFix = true
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -174,6 +177,14 @@ class ClusterPresentation(
     }
 
     fun updateNavState(navState: NavState) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            applyNavState(navState)
+        } else {
+            mainHandler.post { applyNavState(navState) }
+        }
+    }
+
+    private fun applyNavState(navState: NavState) {
         if (!::binding.isInitialized) return
         if (navState.instruction.isNotEmpty()) {
             binding.tvStreetName.text = navState.instruction

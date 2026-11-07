@@ -6,6 +6,19 @@ Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-11-07
+
+### Risolto (Root Cause Crash `CalledFromWrongThreadException` su Coroutine di Background)
+- **Thread-Safety e Dispatch su Main Looper in `FloatingPillView`**:
+  - In `FloatingPillView.kt`, integrato un `Handler(Looper.getMainLooper())` con helper `runOnMainThread`.
+  - Tutti i metodi pubblici che manipolano overlay e widget di sistema (`updateNavState`, `updateMode`, `updateVoiceMute`, `show`, `hide`) ora intercettano le chiamate da thread secondari e le redirezionano sul thread principale.
+  - Risolta l'eccezione `android.view.ViewRootImpl$CalledFromWrongThreadException: Only the original thread that created a view hierarchy can touch its views` emersa durante la guida live con ABRP.
+- **Dispatch Difensivo su Main Thread in `ClusterPresentation`**:
+  - In `ClusterPresentation.kt`, protetta la funzione `updateNavState` con reindirizzamento al Main Looper (`Looper.myLooper() == Looper.getMainLooper()`) prima di aggiornare i campi testo delle manovre, l'iconografia e le viste di cruscotto.
+- **Centralizzazione Threading in `NavClusterService`**:
+  - In `NavClusterService.kt`, le transizioni grafiche scatenate da `onNavStateChanged(state)` (cambio modo, aggiornamento floating pill e visualizzazione mappa cruscotto) e dai callback di stato alimentazione e mute vocale vengono inoltrate esplicitamente tramite `mainHandler.post`.
+  - Mantenuto il disaccoppiamento non bloccante per l'IPC SomeIp/QNX (`clusterBridge.sendTbtInfo`) e la riproduzione vocale TTS neurale Piper (`voiceManager.onNavInstruction`).
+
 ## [1.5.3] - 2026-11-06
 
 ### Risolto (Root Cause ANR 08:33 / Loop Reflection Circolare & Asincronia Notifiche)
