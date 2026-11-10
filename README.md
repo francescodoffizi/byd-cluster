@@ -114,6 +114,7 @@ L'APK generato si troverà in `app/build/outputs/apk/release/app-release.apk`.
 
 Per un'analisi approfondita dell'architettura hardware, della suddivisione dei display, delle specifiche IPC Binder e delle modalità operative per progetti terzi della community, consultare il documento:
 - [Technical Paper: BYD DiLink Digital Instrument Cluster Architecture (docs/paper.md)](docs/paper.md)
+- [Gist Ufficiale (Web Version)](https://gist.github.com/francescodoffizi/fa2920e0fe87fedfacdc155e65ad6981)
 
 ---
 
