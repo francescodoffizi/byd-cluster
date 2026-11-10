@@ -16,7 +16,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
  * ClusterCommBridge v1.4.0 - Supporto Completo Multi-Modale (Semplice, Piccolo, Grande)
  *
  * Implementa l'IPC nativo DiLink verso com.ts.appservice.cluster.service.ClusterCoreService
- * conforme al reverse engineering di Neusoft (BydMapLauncher) e BYDAutoInstrumentDevice.
+ * conforme alle specifiche del modulo cluster DiLink.
  */
 class ClusterCommBridge(private val context: Context) {
 
@@ -26,7 +26,7 @@ class ClusterCommBridge(private val context: Context) {
         const val SETTING_NAVI_DISPLAY_MODE = "moet_extension_navi_display_mode"
         const val SETTING_NAVI_FOCUS_MAP = "moet_extension_navi_focus_map"
 
-        // Modalità Quadro Strumenti DiLink (allineate al reverse engineering OEM Neusoft BydMapLauncher)
+        // Modalità Quadro Strumenti DiLink
         const val MODE_OFF = 1       // MAP_STATE_NAVI_CLOSE (Cruscotto standard tachimetro)
         const val MODE_SEMPLICE = 2  // MAP_STATE_SIMPLE_OPEN (Indicatore sportivo TBT QNX frecce vettoriali)
         const val MODE_PICCOLO = 3   // MAP_STATE_SMALL_OPEN (Mappa 3D nel riquadro centrale tra i quadranti)

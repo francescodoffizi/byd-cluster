@@ -1,6 +1,6 @@
 # BYD DiLink 100 - Turn-by-Turn Cluster Integration Guide (for Yash / OverDrive)
 
-This guide documents the exact reverse-engineered protocol and IPC architecture required to display Turn-by-Turn (TBT) navigation maneuvers directly on the digital instrument cluster of BYD vehicles equipped with DiLink 100 / Qualcomm SA8155P (e.g. Sealion 7, Seal, Tang, Han, Dolphin).
+This guide documents the IPC architecture and protocol specification required to display Turn-by-Turn (TBT) navigation maneuvers directly on the digital instrument cluster of BYD vehicles equipped with DiLink 100 / Qualcomm SA8155P (e.g. Sealion 7, Seal, Tang, Han, Dolphin).
 
 ---
 

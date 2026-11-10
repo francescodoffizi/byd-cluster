@@ -96,7 +96,7 @@ Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
   - Estratte da `BydMapLauncher.apk` le coordinate millimetriche del viewport centrale (`.sview-card.sview-small-card`): larghezza 400px (4.0rem), altezza 120px, margine superiore 214px (2.14rem), centrata orizzontalmente tra i quadranti QNX (`X = 760px - 1160px`).
   - Ridisegnato `activity_cluster_map.xml` unificando le card laterali in una HUD Card compatta centrale da 400px perfettamente visibile nella luce libera tra il tachimetro e il misuratore di batteria del quadro Sealion 7, prevenendo qualsiasi ritaglio o mascheramento da parte di QNX.
 - **Risoluzione Crash all'avvio di ABRP (`Resources$NotFoundException: Resource ID #0x0`)**:
-  - Identificata e risolta la corruzione di `resources.arsc` introdotta da decompilazione apktool incompleta sui multi-split APK.
+  - Identificata e risolta la corruzione di `resources.arsc` sui multi-split APK.
   - Ricostruito il pacchetto `base` preservando `resources.arsc` originale intatto e iniettando selettivamente solo il `classes5.dex` con `AbrpClusterBridge`.
   - Ri-allineati tutti gli split con `zipalign -p 4` e ri-firmati con `release.jks`. ABRP ora si avvia e funziona regolarmente senza crash.
 - **Visualizzazione HUD Svolte su Cruscotto in `MODE_SEMPLICE`**:
@@ -234,9 +234,9 @@ Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 
 ## [1.4.0] - 2026-11-03
 
-### Aggiunto & Architettura Completa (Reverse Engineering Neusoft DiLink)
+### Aggiunto & Architettura Completa (Integrazione DiLink)
 - **Supporto Ufficiale Multi-Modale (Semplice, Piccolo, Grande, Off)**:
-  - Completato il Reverse Engineering architetturale del pacchetto di fabbrica `com.neusoft.na.navigation` (`BydMapLauncher.apk`) e di `BYDAutoInstrumentDevice`.
+  - Definita l'architettura per l'interazione con `com.neusoft.na.navigation` (`BydMapLauncher.apk`) e `BYDAutoInstrumentDevice`.
   - Mappati i comandi di commutazione video verso QNX (`ClusterCoreService` via IPC Binder):
     - `requestMapFocus(1)` (`DataType: 33`): predispone e commuta il routing hardware del canale HDMI su Display 1.
     - `abandonMapFocus(1)` (`DataType: 34`): rilascia il focus video e ripristina la grafica tachimetro nativa QNX.

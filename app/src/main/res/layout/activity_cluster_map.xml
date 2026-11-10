@@ -20,7 +20,7 @@
 
     <!-- 
       OEM Centered Cluster HUD Card (.sview-card.sview-small-card)
-      Dimensioni esatte estratte dal reverse engineering di BydMapLauncher / QNX:
+      Dimensioni e coordinate del viewport DiLink / QNX:
       - Larghezza: 400px (4.0rem)
       - Centrata orizzontalmente tra i quadranti QNX (X: da 760px a 1160px)
       - Margine superiore: 214px (2.14rem)
