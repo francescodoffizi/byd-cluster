@@ -87,6 +87,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnTestTbt.setOnClickListener {
+            val service = NavClusterService.instance
+            if (service == null) {
+                NavClusterService.startService(this)
+                Toast.makeText(this, "Avvio del servizio in corso...", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
             val testState = NavState(
                 isActive = true,
                 sourcePackage = "com.google.android.apps.maps",
@@ -96,20 +102,47 @@ class MainActivity : AppCompatActivity() {
                 eta = "18:45",
                 remainingTimeDistance = "12 min • 4.5 km"
             )
-            NavClusterService.instance?.onNavStateChanged(testState)
+            service.onNavStateChanged(testState)
+            tvNavState.text = "Simulazione attiva: ${testState.instruction} (${testState.distance})"
+            tvNavState.setTextColor(Color.parseColor("#00E676"))
+            Toast.makeText(this, "Simulazione TBT inviata: Svolta a destra in 250m", Toast.LENGTH_SHORT).show()
         }
 
         btnToggleFloatingPill.setOnClickListener {
-            NavClusterService.instance?.toggleFloatingPill()
+            val newState = NavClusterService.instance?.toggleFloatingPill() ?: false
+            btnToggleFloatingPill.text = if (newState) "Nascondi Baloon Flottante" else "Mostra Baloon Flottante"
         }
 
         // Auto-start background service
         NavClusterService.startService(this)
+
+        NavClusterService.instance?.navStateListener = { state ->
+            runOnUiThread {
+                if (state.isActive) {
+                    tvNavState.text = "Navigazione attiva da ${state.sourceName}: ${state.instruction} (${state.distance})"
+                    tvNavState.setTextColor(Color.parseColor("#00E676"))
+                } else {
+                    tvNavState.text = "Navigazione attiva: In attesa di Maps/ABRP"
+                    tvNavState.setTextColor(Color.parseColor("#B0BEC5"))
+                }
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
         updateStatus()
+        NavClusterService.instance?.navStateListener = { state ->
+            runOnUiThread {
+                if (state.isActive) {
+                    tvNavState.text = "Navigazione attiva da ${state.sourceName}: ${state.instruction} (${state.distance})"
+                    tvNavState.setTextColor(Color.parseColor("#00E676"))
+                } else {
+                    tvNavState.text = "Navigazione attiva: In attesa di Maps/ABRP"
+                    tvNavState.setTextColor(Color.parseColor("#B0BEC5"))
+                }
+            }
+        }
     }
 
     private fun updateStatus() {
@@ -147,6 +180,10 @@ class MainActivity : AppCompatActivity() {
             tvSecureSettingsStatus.text = "Controllo Quadro (WRITE_SECURE_SETTINGS): ✗ Mancante (richiede adb grant)"
             tvSecureSettingsStatus.setTextColor(Color.parseColor("#FF5252"))
         }
+
+        val prefs = getSharedPreferences("byd_cluster_prefs", android.content.Context.MODE_PRIVATE)
+        val pillEnabled = prefs.getBoolean(NavClusterService.KEY_FLOATING_PILL_ENABLED, false)
+        btnToggleFloatingPill.text = if (pillEnabled) "Nascondi Baloon Flottante" else "Mostra Baloon Flottante"
 
         val activeState = NavClusterService.instance?.currentNavState
         if (activeState != null && activeState.isActive) {

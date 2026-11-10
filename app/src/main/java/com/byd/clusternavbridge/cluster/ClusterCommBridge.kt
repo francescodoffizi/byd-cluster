@@ -35,13 +35,27 @@ class ClusterCommBridge(private val context: Context) {
 
         const val CMD_NAVI = 16
 
-        // Data types ufficiali da ClusterCommService / SomeIpClusterAdapter
+        // Data types ufficiali da ClusterCommService / SomeIpClusterAdapter / InstrumentMediaManagerImpl
         const val DATA_TYPE_NAVI_SWITCH = 15
         const val DATA_TYPE_NAVI_INFO = 16
         const val DATA_TYPE_NAVI_SEND_DISPLAY_MODE = 30
         const val DATA_TYPE_NAVI_PRESENTATION_STATE = 31
+        const val DATA_TYPE_NAVI_TBT_INFO = 32
         const val DATA_TYPE_REQUEST_MAP_FOCUS = 33
         const val DATA_TYPE_ABANDON_MAP_FOCUS = 34
+        const val DATA_TYPE_NAVI_STATE = 35
+        const val DATA_TYPE_NAVI_TBT_STRING_INFO = 37
+
+        // Stati Navigazione QNX (InstrumentMediaManagerImpl.sendNaviState)
+        const val NAVI_STATE_START = 0
+        const val NAVI_STATE_STOP = 1
+
+        // Unità distanza QNX (InteractionProto$Unit)
+        const val UNIT_KM = 1
+        const val UNIT_MILES = 2
+        const val UNIT_M = 3
+        const val UNIT_YARDS = 4
+        const val UNIT_FT = 5
 
         // Stati Mappa Presentation ufficiali QNX (BYDAutoInstrumentDevice)
         const val MAP_STATE_NAVI_CLOSE = 1
@@ -63,23 +77,41 @@ class ClusterCommBridge(private val context: Context) {
         private set
     private var isNavActive = false
     private var isBound = false
+    private var isBindingInProgress = false
     private val pendingCommands = ConcurrentLinkedQueue<Pair<Int, Bundle>>()
+
+    private val clusterCallback = object : android.os.Binder() {
+        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            if (code == 1) { // TRANSACTION_onReceiveCommand
+                try {
+                    data.enforceInterface("com.ts.lib.cluster.common.IClusterCommCallback")
+                    val bundle = if (data.readInt() != 0) Bundle.CREATOR.createFromParcel(data) else null
+                    Log.d(TAG, "onReceiveCommand from ClusterCoreService: $bundle")
+                    return true
+                } catch (_: Exception) {}
+            }
+            return super.onTransact(code, data, reply, flags)
+        }
+    }
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             Log.w(TAG, "Direct connection to ClusterCoreService established (Binder: $service)")
             directBinder = service
             isBound = true
+            isBindingInProgress = false
             try {
                 service?.linkToDeath({
                     Log.w(TAG, "ClusterCoreService binder died, attempting reconnect")
                     directBinder = null
                     isBound = false
+                    isBindingInProgress = false
                     bindDirectService()
                 }, 0)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to linkToDeath on service: ${e.message}")
             }
+            registerClusterCallback()
             flushPendingCommands()
         }
 
@@ -87,6 +119,27 @@ class ClusterCommBridge(private val context: Context) {
             Log.w(TAG, "Direct connection to ClusterCoreService lost")
             directBinder = null
             isBound = false
+            isBindingInProgress = false
+        }
+    }
+
+    private fun registerClusterCallback() {
+        val binder = directBinder ?: return
+        val data = Parcel.obtain()
+        val reply = Parcel.obtain()
+        try {
+            data.writeInterfaceToken(DESCRIPTOR)
+            data.writeInt(CMD_NAVI)
+            data.writeStrongBinder(clusterCallback)
+            binder.transact(2, data, reply, 0) // TRANSACTION_registerCallback = 2
+            reply.readException()
+            val result = reply.readInt()
+            Log.w(TAG, "registerClusterCallback(CMD_NAVI) result -> $result")
+        } catch (e: Exception) {
+            Log.w(TAG, "registerClusterCallback failed: ${e.message}")
+        } finally {
+            data.recycle()
+            reply.recycle()
         }
     }
 
@@ -95,14 +148,19 @@ class ClusterCommBridge(private val context: Context) {
     }
 
     fun bindDirectService() {
-        if (directBinder != null) return
+        if (directBinder != null || isBindingInProgress) return
         try {
             val intent = Intent().apply {
                 component = ComponentName(SERVICE_PKG, SERVICE_CLS)
             }
+            isBindingInProgress = true
             val bound = context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+            if (!bound) {
+                isBindingInProgress = false
+            }
             Log.w(TAG, "bindDirectService to $SERVICE_CLS initiated: $bound")
         } catch (e: Exception) {
+            isBindingInProgress = false
             Log.w(TAG, "bindDirectService error: ${e.message}")
         }
     }
@@ -129,6 +187,7 @@ class ClusterCommBridge(private val context: Context) {
             } finally {
                 directBinder = null
                 isBound = false
+                isBindingInProgress = false
             }
         }
     }
@@ -142,37 +201,52 @@ class ClusterCommBridge(private val context: Context) {
         when (mode) {
             MODE_PICCOLO -> {
                 isNavActive = true
-                applyDisplayModeSettings(3, focusMap = 1)
                 sendDisplayMode(3)
+                sendDisplayModeDirectToQnx(3)
+                applyDisplayModeSettings(3, focusMap = 1)
                 requestMapFocus(1)
+                sendMapFocusDirectToQnx(1)
+                sendNaviState(1, NAVI_STATE_START)
                 sendNaviPresentationState(1, MAP_STATE_SMALL_OPEN)
                 startTbtMode()
                 return true
             }
             MODE_GRANDE, MODE_INTERO -> {
                 isNavActive = true
-                applyDisplayModeSettings(4, focusMap = 1)
                 sendDisplayMode(4)
+                sendDisplayModeDirectToQnx(4)
+                applyDisplayModeSettings(4, focusMap = 1)
                 requestMapFocus(1)
+                sendMapFocusDirectToQnx(1)
+                sendNaviState(1, NAVI_STATE_START)
                 sendNaviPresentationState(1, MAP_STATE_FULL_OPEN)
                 startTbtMode()
                 return true
             }
             MODE_SEMPLICE -> {
                 isNavActive = true
-                applyDisplayModeSettings(2, focusMap = 0)
+                // Ripristino dell'indicatore semplificato nativo QNX (display_mode=2, MAP_STATE_SIMPLE_OPEN=7):
+                // non apre la finestra nera HDMI di Piccolo (mode 3), ma attiva il widget TBT nativo QNX
+                // nel quadrante destro e invia lo stato NAVI_STATE_START (0) + MAP_STATE_SIMPLE_OPEN (7).
                 sendDisplayMode(2)
-                abandonMapFocus(1)
+                sendDisplayModeDirectToQnx(2)
+                applyDisplayModeSettings(2, focusMap = 1)
+                requestMapFocus(1)
+                sendMapFocusDirectToQnx(1)
+                sendNaviState(1, NAVI_STATE_START)
                 sendNaviPresentationState(1, MAP_STATE_SIMPLE_OPEN)
                 startTbtMode()
                 return true
             }
             MODE_OFF -> {
                 isNavActive = false
-                applyDisplayModeSettings(1, focusMap = 0)
-                sendDisplayMode(1)
-                abandonMapFocus(1)
                 sendNaviPresentationState(1, MAP_STATE_NAVI_CLOSE)
+                sendNaviState(1, NAVI_STATE_STOP)
+                abandonMapFocus(1)
+                sendMapFocusDirectToQnx(0)
+                sendDisplayMode(1)
+                sendDisplayModeDirectToQnx(1)
+                applyDisplayModeSettings(1, focusMap = 0)
                 stopTbtMode()
                 return true
             }
@@ -196,6 +270,22 @@ class ClusterCommBridge(private val context: Context) {
     }
 
     /**
+     * Invia direttamente a QNX il comando HotKeySetting (msgType=3, subtype=3) tramite passthrough DataType 31,
+     * aggirando la deduplica del ContentObserver in SomeIpClusterAdapter.
+     */
+    fun sendDisplayModeDirectToQnx(mode: Int): Boolean {
+        val bundle = Bundle().apply {
+            putInt("msgType", 3)
+            putInt("subtype", 3)
+            putInt("DataType", DATA_TYPE_NAVI_PRESENTATION_STATE)
+            putInt("mode", mode)
+        }
+        val sent = dispatchCommand(CMD_NAVI, bundle)
+        Log.w(TAG, "sendDisplayModeDirectToQnx(mode=$mode) dispatched -> $sent")
+        return sent
+    }
+
+    /**
      * Richiede a QNX di abilitare il routing del feed video Display 1 (HDMI)
      */
     fun requestMapFocus(mapType: Int = 1): Boolean {
@@ -206,6 +296,22 @@ class ClusterCommBridge(private val context: Context) {
         }
         val sent = dispatchCommand(CMD_NAVI, bundle)
         Log.w(TAG, "requestMapFocus(mapType=$mapType) dispatched -> $sent")
+        return sent
+    }
+
+    /**
+     * Invia direttamente a QNX il comando MapFocus (msgType=3, subtype=14) tramite passthrough DataType 31,
+     * aggirando la deduplica di MapFocusManager quando mapType=1 è già in cima a mFocusedMapList.
+     */
+    fun sendMapFocusDirectToQnx(mapType: Int = 1): Boolean {
+        val bundle = Bundle().apply {
+            putInt("msgType", 3)
+            putInt("subtype", 14)
+            putInt("DataType", DATA_TYPE_NAVI_PRESENTATION_STATE)
+            putInt("mapType", mapType)
+        }
+        val sent = dispatchCommand(CMD_NAVI, bundle)
+        Log.w(TAG, "sendMapFocusDirectToQnx(mapType=$mapType) dispatched -> $sent")
         return sent
     }
 
@@ -224,7 +330,25 @@ class ClusterCommBridge(private val context: Context) {
     }
 
     /**
-     * Notifica a QNX lo stato della presentazione (Small, Full, Simple, Close)
+     * Notifica a QNX lo stato della navigazione (DataType 35, msgType=3, subtype=2 -> NavigationState)
+     * naviState: 0 = NAVI_STATE_START, 1 = NAVI_STATE_STOP
+     */
+    fun sendNaviState(mapType: Int = 1, naviState: Int): Boolean {
+        val bundle = Bundle().apply {
+            putInt("msgType", 3)
+            putInt("subtype", 2)
+            putInt("DataType", DATA_TYPE_NAVI_STATE)
+            putInt("mapType", mapType)
+            putInt("naviState", naviState)
+        }
+        val sent = dispatchCommand(CMD_NAVI, bundle)
+        Log.w(TAG, "sendNaviState(mapType=$mapType, naviState=$naviState) dispatched -> $sent")
+        return sent
+    }
+
+    /**
+     * Notifica a QNX lo stato della presentazione (Small=5, Full=6, Simple=7, Close=1)
+     * Nota critica REA: InteractionToBundle.java (qnx.apk) e InstrumentMediaManagerImpl leggono la chiave "state"!
      */
     fun sendNaviPresentationState(mapType: Int = 1, state: Int): Boolean {
         val bundle = Bundle().apply {
@@ -232,7 +356,7 @@ class ClusterCommBridge(private val context: Context) {
             putInt("subtype", 15)
             putInt("DataType", DATA_TYPE_NAVI_PRESENTATION_STATE)
             putInt("mapType", mapType)
-            putInt("naviPresentationState", state)
+            putInt("state", state)
         }
         val sent = dispatchCommand(CMD_NAVI, bundle)
         Log.w(TAG, "sendNaviPresentationState(mapType=$mapType, state=$state) dispatched -> $sent")
@@ -240,80 +364,164 @@ class ClusterCommBridge(private val context: Context) {
     }
 
     /**
-     * Attiva il canale TBT vettoriale a quadro strumenti
+     * Attiva il canale TBT vettoriale a quadro strumenti su QNX (DataType 35)
      */
     fun startTbtMode(): Boolean {
-        val bundle = Bundle().apply {
-            putInt("DataType", DATA_TYPE_NAVI_SWITCH)
-            putInt("NaviSource", 1) // 1: Local / AMAP compatible
-            putInt("NaviTbtSwitch", 1) // 1: OPEN TBT
-            putInt("NaviState", 2) // 2: Navigation started
-        }
-        val sent = dispatchCommand(CMD_NAVI, bundle)
-        Log.w(TAG, "startTbtMode dispatched -> $sent")
+        isNavActive = true
+        val sent = sendNaviState(1, NAVI_STATE_START)
+        Log.w(TAG, "startTbtMode (DataType 35 NAVI_STATE_START) dispatched -> $sent")
         return sent
     }
 
     /**
-     * Disattiva le frecce a quadro strumenti e ripristina la visualizzazione tachimetro
+     * Disattiva le frecce a quadro strumenti su QNX (DataType 35)
      */
     fun stopTbtMode(): Boolean {
-        val bundle = Bundle().apply {
-            putInt("DataType", DATA_TYPE_NAVI_SWITCH)
-            putInt("NaviSource", 1)
-            putInt("NaviTbtSwitch", 0) // 0: CLOSE TBT
-            putInt("NaviState", 0) // 0: Not navigating
-        }
-        val sent = dispatchCommand(CMD_NAVI, bundle)
-        Log.w(TAG, "stopTbtMode dispatched -> $sent")
+        isNavActive = false
+        val sent = sendNaviState(1, NAVI_STATE_STOP)
+        Log.w(TAG, "stopTbtMode (DataType 35 NAVI_STATE_STOP) dispatched -> $sent")
         return sent
     }
 
     /**
-     * Invia le informazioni di svolta (manovra, metri, via, tempo)
+     * Invia le informazioni di svolta nei due formati Protobuf nativi QNX:
+     * 1) DataType 32 (msgType=3, subtype=7 -> InteractionProto.Navigation, float distances + Unit enum)
+     * 2) DataType 37 (msgType=3, subtype=20 -> InteractionProto.NaviTbtInfo, string distances/units)
      */
     fun sendTbtInfo(state: NavState): Boolean {
         if (!state.isActive) {
             return stopTbtMode()
         }
 
-        if (!isNavActive) {
+        if (currentMode == MODE_OFF) {
+            switchClusterMode(MODE_SEMPLICE)
+        } else if (!isNavActive) {
             startTbtMode()
         }
 
-        val distanceMeters = parseDistanceToMeters(state.distance)
+        val cachedRoute = com.byd.clusternavbridge.route.RouteFetcher.getCachedRoute()
+        val rawDistanceMeters = parseDistanceToMeters(state.distance)
+        val parsedTotalDist = parseTotalDistanceToMeters(state.remainingTimeDistance)
+        val totalDistMeters = when {
+            parsedTotalDist > 0 -> parsedTotalDist
+            cachedRoute != null && cachedRoute.distanceMeters > 0 -> cachedRoute.distanceMeters.toInt()
+            rawDistanceMeters > 0 -> rawDistanceMeters
+            else -> 100
+        }
+        val distanceMeters = if (rawDistanceMeters > 0) rawDistanceMeters else totalDistMeters.takeIf { it > 0 } ?: 100
         val iconId = if (state.instruction.isNotBlank()) {
             mapInstructionToIcon(state.instruction)
         } else {
-            1 // Freccia dritto se siamo in navigazione verso destinazione senza svolta immediata
+            9 // 9 = Freccia dritto / continua secondo codifica OEM BYDAutoNaviDevice
         }
-        val remainingSecs = parseEtaToSeconds(state.remainingTimeDistance)
-        val totalDistMeters = parseTotalDistanceToMeters(state.remainingTimeDistance).takeIf { it > 0 } ?: distanceMeters
+        val parsedRemSecs = parseEtaToSeconds(state.remainingTimeDistance)
+        val remainingSecs = when {
+            parsedRemSecs > 0 -> parsedRemSecs
+            cachedRoute != null && cachedRoute.durationSeconds > 0 -> cachedRoute.durationSeconds.toInt()
+            else -> 60
+        }
 
         val roadName = when {
             state.instruction.isNotBlank() -> state.instruction
             state.destination.isNotBlank() -> state.destination
-            else -> "Navigazione"
+            else -> "Prosegui sul percorso"
         }
 
-        val bundle = Bundle().apply {
-            putInt("DataType", DATA_TYPE_NAVI_INFO)
-            putInt("NaviSource", 1)
-            putInt("NaviIconTbt", iconId)
-            putInt("NaviNextRoadDistance", distanceMeters)
-            putString("NaviNextRoadName", roadName)
-            putInt("NaviRoadType", 0)
-            putInt("NaviCrossingStatus", 0)
-            putInt("NaviNextRoadPrecent", 0)
-            putInt("NaviDistanceToDest", totalDistMeters)
-            putInt("NaviDistanceToDestUnit", if (totalDistMeters >= 1000) 0 else 2) // 0: KM, 2: M
-            putInt("NaviToDestTime", remainingSecs)
-            putInt("NaviState", 2)
+        val nextRoadDistFloat: Float
+        val nextDistUnit: Int
+        val nextRoadDistStr: String
+        val nextRoadDistUnitStr: String
+        if (distanceMeters >= 1000) {
+            nextRoadDistFloat = distanceMeters / 1000f
+            nextDistUnit = UNIT_KM
+            nextRoadDistStr = String.format(java.util.Locale.US, "%.1f", nextRoadDistFloat)
+            nextRoadDistUnitStr = "km"
+        } else {
+            nextRoadDistFloat = distanceMeters.toFloat()
+            nextDistUnit = UNIT_M
+            nextRoadDistStr = distanceMeters.toString()
+            nextRoadDistUnitStr = "m"
         }
 
-        val sent = dispatchCommand(CMD_NAVI, bundle)
-        Log.w(TAG, "sendTbtInfo: icon=$iconId, dist=${distanceMeters}m, total=${totalDistMeters}m, road='$roadName' -> $sent")
-        return sent
+        val distToDestFloat: Float
+        val distToDestUnit: Int
+        val distToDestStr: String
+        val distToDestUnitStr: String
+        if (totalDistMeters >= 1000) {
+            distToDestFloat = totalDistMeters / 1000f
+            distToDestUnit = UNIT_KM
+            distToDestStr = String.format(java.util.Locale.US, "%.1f", distToDestFloat)
+            distToDestUnitStr = "km"
+        } else {
+            distToDestFloat = totalDistMeters.toFloat()
+            distToDestUnit = UNIT_M
+            distToDestStr = totalDistMeters.toString()
+            distToDestUnitStr = "m"
+        }
+
+        val totalMinutes = (remainingSecs / 60).coerceAtLeast(1)
+        val toDestDays = totalMinutes / (24 * 60)
+        val effectiveEta = state.eta.ifBlank {
+            cachedRoute?.formattedEta ?: run {
+                val futureMillis = System.currentTimeMillis() + (remainingSecs * 1000L)
+                java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(futureMillis))
+            }
+        }
+        val etaParts = Regex("\\b([01]?\\d|2[0-3]):([0-5]\\d)\\b").find(effectiveEta)
+        // Nota REA: InteractionToBundle case 7 mappa toDestHours -> arriveTimeHour (0..23) e toDestMinutes -> arriveTimeMinute (0..59)
+        val toDestHours = etaParts?.groupValues?.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 23)
+            ?: ((totalMinutes % (24 * 60)) / 60).coerceIn(0, 23)
+        val toDestMinutes = etaParts?.groupValues?.getOrNull(2)?.toIntOrNull()?.coerceIn(0, 59)
+            ?: (totalMinutes % 60).coerceIn(0, 59)
+
+        // 1. Formato QNX Navigation Protobuf (DataType 32, msgType=3, subtype=7)
+        val protoNavBundle = Bundle().apply {
+            putInt("msgType", 3)
+            putInt("subtype", 7)
+            putInt("DataType", DATA_TYPE_NAVI_TBT_INFO)
+            putInt("mapType", 1)
+            putInt("nextTbtIcon", iconId)
+            putString("nextRoadName", roadName)
+            putFloat("nextRoadDist", nextRoadDistFloat)
+            putInt("nextDistUnit", nextDistUnit)
+            putInt("nextNextTbtIcon", 0)
+            putFloat("nextNextRoadDist", 0f)
+            putInt("nextNextDistUnit", UNIT_M)
+            putFloat("distToDest", distToDestFloat)
+            putInt("distToDestUnit", distToDestUnit)
+            putInt("toDestTime", remainingSecs)
+            putInt("toDestDays", toDestDays)
+            putInt("toDestHours", toDestHours)
+            putInt("toDestMinutes", toDestMinutes)
+        }
+        val sent32 = dispatchCommand(CMD_NAVI, protoNavBundle)
+
+        // 2. Formato QNX NaviTbtInfo String Protobuf (DataType 37, msgType=3, subtype=20)
+        val protoStringBundle = Bundle().apply {
+            putInt("msgType", 3)
+            putInt("subtype", 20)
+            putInt("DataType", DATA_TYPE_NAVI_TBT_STRING_INFO)
+            putInt("mapType", 1)
+            putInt("nextTbtIcon", iconId)
+            putString("nextRoadName", roadName)
+            putString("nextRoadDistData", nextRoadDistStr)
+            putString("nextRoadDistUnit", nextRoadDistUnitStr)
+            putInt("nextNextTbtIcon", 0)
+            putString("nextNextDistData", "")
+            putString("nextNextDistAndUnit", "")
+            putString("distToDestDisData", distToDestStr)
+            putString("distToDestDisUnit", distToDestUnitStr)
+            putString("distToDestTime", "$totalMinutes min")
+            putString("arriveToDestTimeDay", "")
+            putString("arriveToDestTime", effectiveEta)
+            putString("multipleText", "")
+            putString("multipleText1", "")
+            putString("multipleText2", "")
+        }
+        val sent37 = dispatchCommand(CMD_NAVI, protoStringBundle)
+
+        Log.w(TAG, "sendTbtInfo(QNX 32+37): icon=$iconId, dist=$nextRoadDistStr$nextRoadDistUnitStr, total=$distToDestStr$distToDestUnitStr, road='$roadName' -> sent32=$sent32, sent37=$sent37")
+        return sent32 && sent37
     }
 
     private fun dispatchCommand(commandId: Int, bundle: Bundle): Boolean {
@@ -420,17 +628,26 @@ class ClusterCommBridge(private val context: Context) {
     fun mapInstructionToIcon(instr: String): Int {
         val lower = instr.lowercase()
         return when {
+            lower.contains("inversione") || lower.contains("u-turn") -> 8
+            lower.contains("rotonda") || lower.contains("rotatoria") || lower.contains("roundabout") -> 16
+            lower.contains("destinazione") || lower.contains("arrivato") || lower.contains("destination") -> 15
             lower.contains("destra") || lower.contains("right") -> {
-                if (lower.contains("legger") || lower.contains("slight")) 5 else 3
+                when {
+                    lower.contains("legger") || lower.contains("slight") || lower.contains("tieni") || lower.contains("keep") -> 5
+                    lower.contains("stretto") || lower.contains("sharp") || lower.contains("hard") || lower.contains("gomito") -> 7
+                    else -> 3
+                }
             }
             lower.contains("sinistra") || lower.contains("left") -> {
-                if (lower.contains("legger") || lower.contains("slight")) 4 else 2
+                when {
+                    lower.contains("legger") || lower.contains("slight") || lower.contains("tieni") || lower.contains("keep") -> 4
+                    lower.contains("stretto") || lower.contains("sharp") || lower.contains("hard") || lower.contains("gomito") -> 6
+                    else -> 2
+                }
             }
-            lower.contains("rotonda") || lower.contains("rotatoria") || lower.contains("roundabout") -> 11
-            lower.contains("inversione") || lower.contains("u-turn") -> 6
-            lower.contains("uscita") || lower.contains("exit") -> 8
-            lower.contains("biforcazione") || lower.contains("fork") -> 7
-            else -> 1 // Dritto / Prosegui
+            lower.contains("uscita") || lower.contains("exit") -> 5
+            lower.contains("biforcazione") || lower.contains("fork") -> 5
+            else -> 9 // 9 = Dritto / Prosegui (OEM BYDAutoNaviDevice)
         }
     }
 }

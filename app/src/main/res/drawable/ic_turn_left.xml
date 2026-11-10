@@ -3,7 +3,8 @@
     android:height="48dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- Svolta a sinistra 90 gradi ad alto contrasto -->
     <path
         android:fillColor="#00E5FF"
-        android:pathData="M9,5v4h6.59c2.43,0 4.41,1.98 4.41,4.41s-1.98,4.41 -4.41,4.41H6v2h9.59c3.53,0 6.41,-2.88 6.41,-6.41s-2.88,-6.41 -6.41,-6.41H9V3L4,7l5,4V5z" />
+        android:pathData="M6.83,11l1.58,1.59L7,14l-4,-4l4,-4l1.41,1.41L6.83,9H15c1.1,0 2,0.9 2,2v9h-2v-9H6.83z" />
 </vector>

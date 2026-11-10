@@ -131,7 +131,7 @@ class VoiceGuidanceManager(
         // Se è l'inizio del percorso e abbiamo una destinazione valida, possiamo fare l'annuncio iniziale una tantum
         if (!hasAnnouncedRouteStart && destination.isNotBlank()) {
             hasAnnouncedRouteStart = true
-            val cleanDest = destination.replace(Regex("^(Verso\\s+|Destinazione:\\s*|Direzione\\s+)", RegexOption.IGNORE_CASE), "").trim()
+            val cleanDest = destination.replace(Regex("^(Verso\\s+|Viaggio verso\\s+|Viaggio per\\s+|Trip to\\s+|Destinazione:\\s*|Direzione\\s+)", RegexOption.IGNORE_CASE), "").trim()
             val startPhrase = if (cleanDest.isNotBlank()) "Navigazione avviata verso $cleanDest" else "Navigazione avviata"
             speak(startPhrase)
             lastSpokenTimestamp = System.currentTimeMillis()
@@ -139,6 +139,10 @@ class VoiceGuidanceManager(
 
         val normalizedManeuver = normalizeInstruction(instruction)
         val distanceMeters = parseDistanceToMeters(distanceStr)
+        if (distanceMeters <= 0 && !hasExplicitManeuverKeyword(instruction)) {
+            Log.d(TAG, "Skipping speech: no distance and no explicit maneuver keyword: '$instruction'")
+            return
+        }
         val currentStage = determineStage(distanceMeters)
 
         // Se la manovra è cambiata (es. da svolta a destra a rotonda), resettiamo lo stage
@@ -225,21 +229,29 @@ class VoiceGuidanceManager(
         val lower = instruction.lowercase(Locale.ITALIAN).trim()
         if (lower.isEmpty()) return true
         val isDestPattern = lower.startsWith("verso ") ||
+                lower.startsWith("viaggio verso ") ||
+                lower.startsWith("viaggio per ") ||
+                lower.startsWith("trip to ") ||
                 lower.startsWith("direzione ") ||
                 lower.startsWith("destinazione") ||
                 lower.startsWith("rotta verso") ||
                 lower.startsWith("arrivo a ") ||
+                lower.startsWith("arrivo ") ||
+                lower.startsWith("arriving at ") ||
                 lower == "casa" || lower == "lavoro" || lower == "home" || lower == "work"
 
         if (!isDestPattern) return false
 
-        // Se contiene una parola chiave di manovra effettiva (es. "Prendi l'uscita verso Roma"), NON è solo un riepilogo
-        val hasManeuver = listOf(
-            "svolta", "gira", "prendi", "esci", "uscita", "rotonda", "rotatoria",
-            "tieni", "rimani", "continua", "prosegui", "destra", "sinistra"
-        ).any { lower.contains(it) }
+        return !hasExplicitManeuverKeyword(lower)
+    }
 
-        return !hasManeuver
+    private fun hasExplicitManeuverKeyword(text: String): Boolean {
+        val lower = text.lowercase(Locale.ITALIAN)
+        return listOf(
+            "svolta", "gira", "prendi", "esci", "uscita", "rotonda", "rotatoria",
+            "tieni", "rimani", "continua", "prosegui", "destra", "sinistra",
+            "inversione", "corsia", "rampa", "biforcazione"
+        ).any { lower.contains(it) }
     }
 
     private fun isGenericNonManeuver(text: String): Boolean {
@@ -308,21 +320,21 @@ class VoiceGuidanceManager(
     }
 
     private fun parseDistanceToMeters(distanceStr: String): Int {
-        if (distanceStr.isEmpty()) return 9999
+        if (distanceStr.isBlank()) return -1
         try {
             val clean = distanceStr.lowercase(Locale.ITALIAN).trim()
             return when {
                 clean.contains("km") -> {
-                    val num = clean.replace("km", "").replace(",", ".").trim().toFloatOrNull() ?: 1.0f
+                    val num = clean.replace("km", "").replace(",", ".").trim().toFloatOrNull() ?: return -1
                     (num * 1000).toInt()
                 }
                 clean.contains("m") -> {
-                    clean.replace("m", "").replace(".", "").trim().toIntOrNull() ?: 500
+                    clean.replace("m", "").replace(".", "").trim().toIntOrNull() ?: -1
                 }
-                else -> 500
+                else -> -1
             }
         } catch (_: Exception) {
-            return 500
+            return -1
         }
     }
 }

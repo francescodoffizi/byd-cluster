@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Svolta leggera a sinistra 45 gradi -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M11.66,9.83L6.83,5L6,5.83l4.83,4.83l-2.42,2.42L7,14.49l5.49,-0.83l0.83,-5.49L12,6.83L11.66,9.83z M14,14.59V20h-2v-6.41l3.5,-3.5l1.41,1.41L14,14.59z" />
+</vector>

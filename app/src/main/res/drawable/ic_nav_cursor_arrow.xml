@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- Outer white border of the 3D navigation chevron -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,4 L42,40 L24,31 L6,40 Z" />
+
+    <!-- Left facet of navigation arrow (bright cyan) -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M24,8 L24,29 L10.5,36.5 Z" />
+
+    <!-- Right facet of navigation arrow (deep cyan for 3D shading) -->
+    <path
+        android:fillColor="#0097A7"
+        android:pathData="M24,8 L37.5,36.5 L24,29 Z" />
+</vector>

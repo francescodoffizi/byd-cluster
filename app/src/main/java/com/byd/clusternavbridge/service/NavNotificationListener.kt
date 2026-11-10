@@ -26,7 +26,10 @@ class NavNotificationListener : NotificationListenerService() {
         val TARGET_PACKAGES = setOf(
             "app.revanced.android.apps.maps",
             "com.google.android.apps.maps",
-            "com.iternio.abrpapp"
+            "com.iternio.abrpapp",
+            "com.here.app.maps",
+            "net.osmand",
+            "net.osmand.plus"
         )
     }
 
@@ -114,10 +117,13 @@ class NavNotificationListener : NotificationListenerService() {
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim() ?: ""
 
         val isAbrp = (pkg == "com.iternio.abrpapp")
+        val isHereMaps = (pkg == "com.here.app.maps")
         val appName = when (pkg) {
             "app.revanced.android.apps.maps" -> "Google Maps"
             "com.google.android.apps.maps" -> "Google Maps"
             "com.iternio.abrpapp" -> "ABRP"
+            "com.here.app.maps" -> "HERE WeGo"
+            "net.osmand", "net.osmand.plus" -> "OsmAnd"
             else -> "Nav"
         }
 
@@ -139,8 +145,8 @@ class NavNotificationListener : NotificationListenerService() {
             notification.headsUpContentView
         )
 
-        // Se è ABRP, o se title/text sono vuoti o rappresentano solo una destinazione, estraiamo SEMPRE da RemoteViews
-        val shouldInspectRemoteViews = isAbrp || (title.isEmpty() && text.isEmpty()) || 
+        // Se è ABRP/HERE, o se title/text sono vuoti o rappresentano solo una destinazione, estraiamo da RemoteViews
+        val shouldInspectRemoteViews = isAbrp || isHereMaps || (title.isEmpty() && text.isEmpty()) || 
                 (allViews.isNotEmpty() && isDestinationOrRouteSummary(title))
 
         if (shouldInspectRemoteViews && allViews.isNotEmpty()) {
@@ -212,7 +218,7 @@ class NavNotificationListener : NotificationListenerService() {
                     } else {
                         maneuver
                     }
-                } else if (candidateRoadNames.isNotEmpty()) {
+                } else if (distCandidates.isNotEmpty() && candidateRoadNames.isNotEmpty()) {
                     instruction = candidateRoadNames.joinToString(" - ")
                 } else if (distance.isNotEmpty() && !distance.endsWith("km", ignoreCase = true)) {
                     // C'è una distanza di manovra in metri ma nessun testo: dritto
@@ -221,19 +227,38 @@ class NavNotificationListener : NotificationListenerService() {
             }
         }
 
-        // Fallback su title e text se instruction o distance sono ancora vuoti (es. Google Maps standard)
-        if (instruction.isEmpty() && title.isNotEmpty()) {
+        // Supporto formato combinato "350 m • Via Roma" o "350 m - Svolta a destra" (tipico di HERE WeGo e OsmAnd)
+        val combinedDistPrefixRegex = Regex("^([~]?[0-9]+(?:[.,][0-9]+)?\\s*(?:m|km|mi|ft))\\s*[-•·:]\\s*(.+)$", RegexOption.IGNORE_CASE)
+        if (title.isNotEmpty()) {
+            val combinedMatch = combinedDistPrefixRegex.find(title)
+            if (combinedMatch != null) {
+                if (distance.isEmpty()) distance = combinedMatch.groupValues[1].trim()
+                if (instruction.isEmpty()) instruction = combinedMatch.groupValues[2].trim()
+            }
+        }
+        if (text.isNotEmpty() && (distance.isEmpty() || instruction.isEmpty())) {
+            val combinedMatch = combinedDistPrefixRegex.find(text)
+            if (combinedMatch != null) {
+                if (distance.isEmpty()) distance = combinedMatch.groupValues[1].trim()
+                if (instruction.isEmpty()) instruction = combinedMatch.groupValues[2].trim()
+            }
+        }
+
+        // Fallback su title e text se instruction o distance sono ancora vuoti (es. Google Maps / HERE WeGo standard)
+        if (instruction.isEmpty() && title.isNotEmpty() && !isGenericStatus(title)) {
             if (isDestinationOrRouteSummary(title)) {
                 if (destination.isEmpty()) destination = title
             } else if (distPatternHelper.matches(title)) {
                 if (distance.isEmpty()) distance = title
-                if (instruction.isEmpty() && !isDestinationOrRouteSummary(text)) instruction = text
+                if (instruction.isEmpty() && !isDestinationOrRouteSummary(text) && !isGenericStatus(text)) {
+                    instruction = text
+                }
             } else {
                 if (instruction.isEmpty()) instruction = title
             }
         }
 
-        if (instruction.isEmpty() && text.isNotEmpty()) {
+        if (instruction.isEmpty() && text.isNotEmpty() && !isGenericStatus(text)) {
             if (isDestinationOrRouteSummary(text)) {
                 if (destination.isEmpty()) destination = text
             } else if (distPatternHelper.matches(text)) {
@@ -241,14 +266,35 @@ class NavNotificationListener : NotificationListenerService() {
             } else {
                 instruction = text
             }
+        } else if (distance.isEmpty() && text.isNotEmpty() && distPatternHelper.matches(text)) {
+            distance = text
         }
 
-        if (subText.isNotEmpty() && remaining.isEmpty()) {
+        if (subText.isNotEmpty() && remaining.isEmpty() && !isGenericStatus(subText)) {
             remaining = subText
             val arrivalMatch = arrivalPatternHelper.find(subText)
             if (arrivalMatch != null && eta.isEmpty()) {
                 eta = arrivalMatch.groupValues[1]
             }
+        }
+
+        // Se la notifica contiene solo un riepilogo destinazione (es. LiveUpdate Voltra di ABRP o Foreground HERE WeGo),
+        // non sovrascrivere un'istruzione di svolta attiva già ricevuta via broadcast TbtBroadcastReceiver o UI Banner!
+        val currentState = NavClusterService.instance?.currentNavState
+        if (instruction.isEmpty() && currentState != null && currentState.isActive &&
+            currentState.sourcePackage == pkg && currentState.instruction.isNotEmpty() &&
+            !isGenericStatus(currentState.instruction)
+        ) {
+            instruction = currentState.instruction
+            if (distance.isEmpty()) distance = currentState.distance
+        }
+
+        // Se la notifica è ongoing su un canale di guida attivo (es. HERE WeGo in primo piano con "Navigazione vocale"),
+        // mantieni la sessione attiva con un'etichetta di destinazione pulita in attesa della prima manovra.
+        if (instruction.isEmpty() && destination.isEmpty() && distance.isEmpty() &&
+            (isHereMaps || isAbrp) && (isGenericStatus(title) || isGenericStatus(text))
+        ) {
+            destination = "Navigazione $appName attiva"
         }
 
         // Se non abbiamo ancora un'istruzione di svolta ma abbiamo una destinazione e siamo attivi
@@ -282,10 +328,15 @@ class NavNotificationListener : NotificationListenerService() {
         val lower = str.lowercase(java.util.Locale.ITALIAN).trim()
         if (lower.isEmpty()) return false
         val isDest = lower.startsWith("verso ") ||
+                lower.startsWith("viaggio verso ") ||
+                lower.startsWith("viaggio per ") ||
+                lower.startsWith("trip to ") ||
                 lower.startsWith("direzione ") ||
                 lower.startsWith("destinazione") ||
                 lower.startsWith("rotta verso") ||
                 lower.startsWith("arrivo a ") ||
+                lower.startsWith("arrivo ") ||
+                lower.startsWith("arriving at ") ||
                 lower == "casa" || lower == "lavoro" || lower == "home" || lower == "work"
         if (!isDest) return false
         val hasManeuver = listOf(
@@ -502,8 +553,19 @@ class NavNotificationListener : NotificationListenerService() {
     }
 
     private fun isGenericStatus(text: String): Boolean {
-        val lower = text.lowercase()
-        return lower.contains("navigazione in corso") ||
+        val lower = text.lowercase(java.util.Locale.ITALIAN).trim()
+        return lower == "abrp" ||
+                lower == "a better routeplanner" ||
+                lower == "here wego" ||
+                lower == "google maps" ||
+                lower == "maps" ||
+                lower == "osmand" ||
+                lower == "navigazione" ||
+                lower == "navigazione attiva" ||
+                lower == "navigazione vocale" ||
+                lower.contains("navigazione in corso") ||
+                lower.contains("tocca per tornare") ||
+                lower.contains("tap to return") ||
                 lower.contains("ricalcolo") ||
                 lower.contains("ricerca segnale") ||
                 lower.contains("in attesa di segnale") ||

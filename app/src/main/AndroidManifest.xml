@@ -14,6 +14,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <queries>
@@ -21,6 +22,9 @@
         <package android:name="app.revanced.android.apps.maps" />
         <package android:name="com.google.android.apps.maps" />
         <package android:name="com.iternio.abrpapp" />
+        <package android:name="com.here.app.maps" />
+        <package android:name="net.osmand" />
+        <package android:name="net.osmand.plus" />
         <package android:name="org.woheller69.ttsengine" />
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
@@ -48,11 +52,27 @@
         <service
             android:name=".service.NavClusterService"
             android:exported="true"
-            android:foregroundServiceType="connectedDevice" />
+            android:directBootAware="true"
+            android:foregroundServiceType="location|connectedDevice" />
+
+        <service
+            android:name=".service.NavAccessibilityService"
+            android:exported="true"
+            android:directBootAware="true"
+            android:label="@string/service_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
 
         <service
             android:name=".service.NavNotificationListener"
             android:exported="true"
+            android:directBootAware="true"
             android:label="@string/service_name"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
@@ -63,11 +83,22 @@
         <receiver
             android:name=".receiver.BootReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:directBootAware="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".receiver.TbtBroadcastReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="com.byd.clusternavbridge.TBT_UPDATE" />
             </intent-filter>
         </receiver>
 

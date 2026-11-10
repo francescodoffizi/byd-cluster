@@ -7,14 +7,21 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.byd.clusternavbridge.R
 import com.byd.clusternavbridge.cluster.ClusterCommBridge
 import com.byd.clusternavbridge.model.NavState
@@ -25,22 +32,25 @@ import com.byd.clusternavbridge.ui.MainActivity
 import com.byd.clusternavbridge.voice.VoiceGuidanceManager
 
 /**
- * NavClusterService v1.4.0
+ * NavClusterService v1.5.8
  *
  * Supporta in modo coordinato le 4 modalità del quadro strumenti DiLink 100:
- * - MODE_OFF (0)      : Cruscotto standard tachimetro OEM
- * - MODE_PICCOLO (1)  : Mappa 3D nel riquadro centrale + handshake Modo 5
- * - MODE_SEMPLICE (2) : Indicatore sportivo frecce TBT vettoriali QNX (zero GPU)
- * - MODE_GRANDE (3)   : Mappa 3D a pieno schermo panoramico + handshake Modo 6
+ * - MODE_OFF (1)      : Cruscotto standard tachimetro OEM
+ * - MODE_SEMPLICE (2) : Card HUD svolta su sfondo nero puro nel riquadro destro (zero GPU mappa)
+ * - MODE_PICCOLO (3)  : Mappa 3D + Card HUD nel riquadro destro + handshake Modo 5
+ * - MODE_GRANDE (4)   : Mappa 3D a pieno schermo panoramico + Card HUD + handshake Modo 6
  *
- * Mantiene Google Maps / ABRP intatti su Display 0 senza distacco né crash.
+ * Mantiene Google Maps / ABRP / HERE WeGo intatti su Display 0 senza distacco né crash.
  */
-class NavClusterService : Service() {
+class NavClusterService : Service(), LocationListener {
 
     companion object {
         private const val TAG = "BydNavClusterService"
         private const val CHANNEL_ID = "byd_nav_channel"
         private const val NOTIFICATION_ID = 1001
+        private const val PREFS_NAME = "byd_cluster_prefs"
+        private const val KEY_PREFERRED_MODE = "preferred_mode"
+        const val KEY_FLOATING_PILL_ENABLED = "pref_floating_pill_enabled"
 
         var instance: NavClusterService? = null
             private set
@@ -71,9 +81,13 @@ class NavClusterService : Service() {
     private lateinit var clusterBridge: ClusterCommBridge
     private lateinit var powerMonitor: VehiclePowerMonitor
     private lateinit var voiceManager: VoiceGuidanceManager
+    private var locationManager: LocationManager? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var floatingPill: FloatingPillView? = null
     private var clusterPresentation: ClusterPresentation? = null
+
+    var lastKnownLocation: Location? = null
+        private set
 
     var currentNavState: NavState = NavState()
         private set
@@ -81,10 +95,14 @@ class NavClusterService : Service() {
     var currentMode: Int = ClusterCommBridge.MODE_SEMPLICE
         private set
 
+    var navStateListener: ((NavState) -> Unit)? = null
+
     override fun onCreate() {
         super.onCreate()
-        instance = this
-        Log.w(TAG, "NavClusterService onCreate (v1.5.2 Multi-Modale + TTS Voice)")
+        Log.w(TAG, "NavClusterService onCreate (v1.5.9 Multi-Modale QNX Proto + OSRM Route + 3D Cursor)")
+
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        currentMode = prefs.getInt(KEY_PREFERRED_MODE, ClusterCommBridge.MODE_SEMPLICE)
 
         clusterBridge = ClusterCommBridge(this)
         clusterBridge.bindDirectService()
@@ -105,7 +123,7 @@ class NavClusterService : Service() {
                     floatingPill?.hide()
                 } else {
                     initFloatingPill()
-                    if (currentNavState.isActive) {
+                    if (currentMode != ClusterCommBridge.MODE_OFF) {
                         setMode(currentMode)
                     }
                 }
@@ -113,14 +131,33 @@ class NavClusterService : Service() {
         }
         powerMonitor.start()
 
+        // Imposta instance SOLO dopo che clusterBridge, voiceManager e powerMonitor sono inizializzati!
+        instance = this
+
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildForegroundNotification("Navigazione Cluster DiLink attiva"))
+        val notification = buildForegroundNotification("Navigazione Cluster DiLink attiva")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+
+        ensureAccessibilityServiceEnabled()
+        startContinuousLocationTracking()
 
         initFloatingPill()
+        if (currentMode != ClusterCommBridge.MODE_OFF) {
+            mainHandler.post { setMode(currentMode) }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         clusterBridge.bindDirectService()
+        ensureAccessibilityServiceEnabled()
         when (intent?.action) {
             ACTION_SET_MODE -> {
                 val mode = intent.getIntExtra(EXTRA_MODE, ClusterCommBridge.MODE_SEMPLICE)
@@ -159,6 +196,99 @@ class NavClusterService : Service() {
         return START_STICKY
     }
 
+    @Suppress("MissingPermission")
+    private fun startContinuousLocationTracking() {
+        try {
+            val hasFine = ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            val hasCoarse = ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!hasFine && !hasCoarse) {
+                Log.w(TAG, "Location permissions not yet granted for NavClusterService")
+                return
+            }
+
+            locationManager = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            val lm = locationManager ?: return
+
+            for (provider in listOf(
+                LocationManager.GPS_PROVIDER,
+                LocationManager.NETWORK_PROVIDER,
+                LocationManager.PASSIVE_PROVIDER
+            )) {
+                try {
+                    if (lm.isProviderEnabled(provider)) {
+                        lm.requestLocationUpdates(provider, 800L, 0.5f, this, Looper.getMainLooper())
+                        Log.i(TAG, "Registered continuous location updates on provider: $provider")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to register provider $provider: ${e.message}")
+                }
+            }
+
+            var bestLoc: Location? = null
+            for (provider in lm.getProviders(true)) {
+                try {
+                    val loc = lm.getLastKnownLocation(provider) ?: continue
+                    if (bestLoc == null || loc.time > bestLoc.time) {
+                        bestLoc = loc
+                    }
+                } catch (_: Exception) {}
+            }
+            bestLoc?.let { onLocationChanged(it) }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error in startContinuousLocationTracking: ${e.message}")
+        }
+    }
+
+    override fun onLocationChanged(location: Location) {
+        lastKnownLocation = location
+        clusterPresentation?.onLocationChanged(location)
+        if (currentMode == ClusterCommBridge.MODE_SEMPLICE &&
+            (currentNavState.isActive || currentNavState.instruction.isNotBlank())
+        ) {
+            com.byd.clusternavbridge.route.RouteFetcher.fetchRouteIfNeeded(
+                currentLat = location.latitude,
+                currentLon = location.longitude,
+                destination = currentNavState.destination,
+                instruction = currentNavState.instruction
+            ) {
+                clusterBridge.sendTbtInfo(getEffectiveSimpleTbtState())
+            }
+        }
+    }
+
+    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+    override fun onProviderEnabled(provider: String) {}
+    override fun onProviderDisabled(provider: String) {}
+
+    private fun ensureAccessibilityServiceEnabled() {
+        try {
+            val component = "${packageName}/${NavAccessibilityService::class.java.name}"
+            val current = Settings.Secure.getString(
+                contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ) ?: ""
+            if (!current.contains(component)) {
+                val updated = if (current.isBlank()) component else "$current:$component"
+                Settings.Secure.putString(
+                    contentResolver,
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                    updated
+                )
+                Settings.Secure.putInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+                Log.w(TAG, "Auto-enabled NavAccessibilityService in Settings.Secure: $updated")
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Could not auto-enable NavAccessibilityService: ${e.message}")
+        }
+    }
+
     fun setMode(mode: Int) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post { setMode(mode) }
@@ -166,14 +296,57 @@ class NavClusterService : Service() {
         }
         Log.w(TAG, "Setting mode to $mode")
         currentMode = mode
-        clusterBridge.switchClusterMode(mode)
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_PREFERRED_MODE, mode)
+            .apply()
 
         when (mode) {
-            ClusterCommBridge.MODE_PICCOLO, ClusterCommBridge.MODE_GRANDE -> {
+            ClusterCommBridge.MODE_PICCOLO -> {
                 openClusterPresentation()
+                clusterPresentation?.updateMode(mode)
+                clusterBridge.switchClusterMode(mode)
+                mainHandler.postDelayed({
+                    if (currentMode == ClusterCommBridge.MODE_PICCOLO) {
+                        clusterBridge.sendNaviPresentationState(1, ClusterCommBridge.MAP_STATE_SMALL_OPEN)
+                    }
+                }, 180L)
             }
-            ClusterCommBridge.MODE_SEMPLICE, ClusterCommBridge.MODE_OFF -> {
+            ClusterCommBridge.MODE_GRANDE -> {
+                openClusterPresentation()
+                clusterPresentation?.updateMode(mode)
+                clusterBridge.switchClusterMode(mode)
+                mainHandler.postDelayed({
+                    if (currentMode == ClusterCommBridge.MODE_GRANDE) {
+                        clusterBridge.sendNaviPresentationState(1, ClusterCommBridge.MAP_STATE_FULL_OPEN)
+                    }
+                }, 180L)
+            }
+            ClusterCommBridge.MODE_SEMPLICE -> {
+                // In modalità Semplice manteniamo la Presentation HDMI su Display 1
+                // a zero carico GPU (mappa GONE) con Card HUD attiva su sfondo OLED nero puro,
+                // inviando parallelamente i pacchetti Protobuf nativi QNX (display_mode=2, MAP_STATE_SIMPLE_OPEN=7).
+                openClusterPresentation()
+                clusterPresentation?.updateMode(mode)
+                clusterBridge.switchClusterMode(mode)
+                val simpleState = getEffectiveSimpleTbtState()
+                clusterBridge.sendTbtInfo(simpleState)
+                mainHandler.postDelayed({
+                    if (currentMode == ClusterCommBridge.MODE_SEMPLICE) {
+                        clusterBridge.sendNaviState(1, ClusterCommBridge.NAVI_STATE_START)
+                        clusterBridge.sendNaviPresentationState(1, ClusterCommBridge.MAP_STATE_SIMPLE_OPEN)
+                        clusterBridge.sendTbtInfo(getEffectiveSimpleTbtState())
+                    }
+                }, 220L)
+                mainHandler.postDelayed({
+                    if (currentMode == ClusterCommBridge.MODE_SEMPLICE) {
+                        clusterBridge.sendTbtInfo(getEffectiveSimpleTbtState())
+                    }
+                }, 700L)
+            }
+            ClusterCommBridge.MODE_OFF -> {
                 closeClusterPresentation()
+                clusterBridge.switchClusterMode(mode)
             }
         }
 
@@ -189,24 +362,30 @@ class NavClusterService : Service() {
 
         if (clusterPresentation != null && clusterPresentation?.isShowing == true) {
             clusterPresentation?.updateNavState(currentNavState)
+            lastKnownLocation?.let { clusterPresentation?.onLocationChanged(it) }
             return
         }
 
         val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return
+        val allDisplays = dm.displays
         val presentationDisplays = dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)
-        val targetDisplay = if (presentationDisplays.isNotEmpty()) {
-            presentationDisplays[0]
-        } else {
-            dm.displays.firstOrNull { it.displayId == 1 }
-        }
+
+        // Ricerca display con priorità ai container condivisi OEM di Sealion 7 / DiLink
+        val targetDisplay = allDisplays.firstOrNull { it.name.equals("shared_fission_bg_XDJAScreenProjection_0", ignoreCase = true) }
+            ?: allDisplays.firstOrNull { it.name.equals("shared_fission_bg_XDJAScreenProjection_1", ignoreCase = true) }
+            ?: allDisplays.firstOrNull { it.name.contains("XDJAScreenProjection", ignoreCase = true) }
+            ?: presentationDisplays.firstOrNull()
+            ?: allDisplays.firstOrNull { it.displayId == 1 }
 
         if (targetDisplay != null) {
             try {
                 clusterPresentation = ClusterPresentation(this, targetDisplay).apply {
+                    updateMode(currentMode)
                     show()
                     updateNavState(currentNavState)
+                    lastKnownLocation?.let { onLocationChanged(it) }
                 }
-                Log.i(TAG, "ClusterPresentation opened on display ${targetDisplay.displayId} (${targetDisplay.name})")
+                Log.i(TAG, "ClusterPresentation opened on display ${targetDisplay.displayId} (${targetDisplay.name}) with mode $currentMode")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to open ClusterPresentation on display", e)
             }
@@ -233,24 +412,72 @@ class NavClusterService : Service() {
         if (state.isActive) {
             val targetMode = if (currentMode == ClusterCommBridge.MODE_OFF) ClusterCommBridge.MODE_SEMPLICE else currentMode
             if (clusterBridge.currentMode == ClusterCommBridge.MODE_OFF || currentMode == ClusterCommBridge.MODE_OFF) {
+                clusterBridge.switchClusterMode(targetMode)
+                mainHandler.post { setMode(targetMode) }
+            } else if (targetMode in listOf(ClusterCommBridge.MODE_PICCOLO, ClusterCommBridge.MODE_GRANDE) &&
+                (clusterPresentation == null || clusterPresentation?.isShowing != true)
+            ) {
                 mainHandler.post { setMode(targetMode) }
             }
-            clusterBridge.sendTbtInfo(state)
+            if (targetMode == ClusterCommBridge.MODE_SEMPLICE) {
+                clusterBridge.sendNaviState(1, ClusterCommBridge.NAVI_STATE_START)
+                clusterBridge.sendNaviPresentationState(1, ClusterCommBridge.MAP_STATE_SIMPLE_OPEN)
+                clusterBridge.sendTbtInfo(getEffectiveSimpleTbtState())
+            } else {
+                clusterBridge.sendTbtInfo(state)
+            }
             mainHandler.post { clusterPresentation?.updateNavState(state) }
             if (state.instruction.isNotEmpty() || state.destination.isNotEmpty()) {
                 voiceManager.onNavInstruction(state.instruction, state.distance, state.destination)
             }
         } else {
+            // Non sovrascrivere currentMode scelto dall'utente!
             voiceManager.stop()
-            mainHandler.post { setMode(ClusterCommBridge.MODE_OFF) }
+            if (currentMode == ClusterCommBridge.MODE_SEMPLICE) {
+                // In modalità Semplice manteniamo l'indicatore QNX visibile in stato pronto anziché "Naviga prima"
+                clusterBridge.sendNaviState(1, ClusterCommBridge.NAVI_STATE_START)
+                clusterBridge.sendNaviPresentationState(1, ClusterCommBridge.MAP_STATE_SIMPLE_OPEN)
+                clusterBridge.sendTbtInfo(getEffectiveSimpleTbtState())
+            } else {
+                clusterBridge.stopTbtMode()
+            }
+            mainHandler.post {
+                clusterPresentation?.updateNavState(state)
+            }
         }
 
         mainHandler.post { floatingPill?.updateNavState(state) }
+        mainHandler.post { navStateListener?.invoke(state) }
+    }
+
+    private fun getEffectiveSimpleTbtState(): NavState {
+        return if (currentNavState.isActive || currentNavState.distance.isNotBlank() || currentNavState.instruction.isNotBlank()) {
+            currentNavState.copy(
+                isActive = true,
+                distance = currentNavState.distance.ifBlank { "100 m" },
+                instruction = currentNavState.instruction.ifBlank { "Prosegui sul percorso" },
+                remainingTimeDistance = currentNavState.remainingTimeDistance.ifBlank { "1 min • 1.0 km" }
+            )
+        } else {
+            NavState(
+                isActive = true,
+                sourcePackage = packageName,
+                sourceName = "NavBridge",
+                distance = "0 m",
+                instruction = "In attesa di indicazioni...",
+                destination = "NavBridge Pronto",
+                eta = "",
+                remainingTimeDistance = "1 min • 0.1 km"
+            )
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         Log.i(TAG, "NavClusterService onDestroy")
+        try {
+            locationManager?.removeUpdates(this)
+        } catch (_: Exception) {}
         voiceManager.shutdown()
         powerMonitor.stop()
         closeClusterPresentation()
@@ -267,6 +494,9 @@ class NavClusterService : Service() {
             Log.i(TAG, "Vehicle is OFF; floating pill deferred")
             return
         }
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val pillEnabled = prefs.getBoolean(KEY_FLOATING_PILL_ENABLED, false) // Default: SPENTO!
+
         if (Settings.canDrawOverlays(this)) {
             if (floatingPill == null) {
                 floatingPill = FloatingPillView(
@@ -279,8 +509,13 @@ class NavClusterService : Service() {
                     }
                 )
             }
-            floatingPill?.show()
-            floatingPill?.updateVoiceMute(voiceManager.isMuted)
+            if (pillEnabled) {
+                floatingPill?.show()
+                floatingPill?.updateMode(currentMode)
+                floatingPill?.updateVoiceMute(voiceManager.isMuted)
+            } else {
+                floatingPill?.hide()
+            }
         } else {
             Log.w(TAG, "Overlay permission not granted; floating pill deferred")
         }
@@ -294,17 +529,22 @@ class NavClusterService : Service() {
 
     fun toggleFloatingPill(): Boolean {
         if (!Settings.canDrawOverlays(this)) return false
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val isShowing = floatingPill?.isShowing == true
+        val newState = !isShowing
+        prefs.edit().putBoolean(KEY_FLOATING_PILL_ENABLED, newState).apply()
+
         if (floatingPill == null) {
             initFloatingPill()
-            return true
         }
-        return if (floatingPill?.isShowing == true) {
-            floatingPill?.hide()
-            false
-        } else {
+        if (newState) {
             floatingPill?.show()
-            true
+            floatingPill?.updateMode(currentMode)
+            floatingPill?.updateVoiceMute(voiceManager.isMuted)
+        } else {
+            floatingPill?.hide()
         }
+        return newState
     }
 
     private fun createNotificationChannel() {

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
+    android:layout_width="1920px"
+    android:layout_height="720px"
     android:background="#0A0E14"
     android:keepScreenOn="true">
 
@@ -11,149 +11,162 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- MapLibre 3D Vector Map View -->
-    <org.maplibre.android.maps.MapView
-        android:id="@+id/mapView"
+    <!-- Lazy Container for MapLibre 3D Vector Map View (Viewport 1920x720 centrata su X=960) -->
+    <FrameLayout
+        android:id="@+id/mapContainer"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:visibility="gone" />
 
-    <!-- Top Left HUD Card: Next Maneuver & Street -->
+    <!-- 
+      OEM Centered Cluster HUD Card (.sview-card.sview-small-card)
+      Dimensioni esatte estratte dal reverse engineering di BydMapLauncher / QNX:
+      - Larghezza: 400px (4.0rem)
+      - Centrata orizzontalmente tra i quadranti QNX (X: da 760px a 1160px)
+      - Margine superiore: 214px (2.14rem)
+      - Finitura visiva: Dark Glass (#F219232D) con bordo Neusoft (#1F2326) e raggio 8dp (0.08rem)
+    -->
     <LinearLayout
-        android:id="@+id/layoutManeuverHud"
-        android:layout_width="wrap_content"
+        android:id="@+id/layoutCenterClusterHud"
+        android:layout_width="400px"
         android:layout_height="wrap_content"
-        android:layout_gravity="top|start"
-        android:layout_marginStart="40dp"
-        android:layout_marginTop="28dp"
-        android:background="#CC111822"
-        android:orientation="horizontal"
-        android:paddingStart="24dp"
-        android:paddingTop="16dp"
-        android:paddingEnd="32dp"
-        android:paddingBottom="16dp">
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="214px"
+        android:background="#F219232D"
+        android:elevation="8dp"
+        android:orientation="vertical"
+        android:padding="0dp">
 
-        <ImageView
-            android:id="@+id/ivManeuverIcon"
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:layout_gravity="center_vertical"
-            android:contentDescription="Maneuver Icon"
-            android:tint="#00E5FF" />
-
+        <!-- Top Maneuver Row (101px / 1.01rem) -->
         <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:orientation="vertical">
+            android:layout_width="match_parent"
+            android:layout_height="101px"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="12px"
+            android:paddingEnd="16px">
 
-            <TextView
-                android:id="@+id/tvManeuverDistance"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="500 m"
-                android:textColor="#FFFFFF"
-                android:textSize="32sp"
-                android:textStyle="bold" />
+            <!-- Maneuver Mark Icon (Neusoft .maneuer-mark: 120x120 scaled / 72px base) -->
+            <ImageView
+                android:id="@+id/ivManeuverIcon"
+                android:layout_width="72px"
+                android:layout_height="72px"
+                android:layout_gravity="center_vertical"
+                android:contentDescription="Maneuver Icon"
+                android:tint="#00E5FF" />
 
-            <TextView
-                android:id="@+id/tvStreetName"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:maxWidth="500dp"
-                android:text="Navigazione attiva"
-                android:textColor="#B0BEC5"
-                android:textSize="20sp" />
+            <!-- Maneuver Text Info (Distanza + Strada) -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="16px"
+                android:layout_weight="1"
+                android:gravity="center_vertical"
+                android:orientation="vertical">
+
+                <!-- Distanza (Neusoft .maneuer-distance: font 48px, line-height 63px) -->
+                <TextView
+                    android:id="@+id/tvManeuverDistance"
+                    android:layout_width="wrap_content"
+                    android:layout_height="56px"
+                    android:gravity="bottom"
+                    android:includeFontPadding="false"
+                    android:text="--"
+                    android:textColor="#FFFFFF"
+                    android:textSize="36sp"
+                    android:textStyle="bold" />
+
+                <!-- Nome Strada (Neusoft .maneuer-road-name: font 24px, line-height 38px) -->
+                <TextView
+                    android:id="@+id/tvStreetName"
+                    android:layout_width="match_parent"
+                    android:layout_height="36px"
+                    android:ellipsize="end"
+                    android:gravity="top"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:text="Navigazione attiva"
+                    android:textColor="#DAE1EB"
+                    android:textSize="18sp" />
+            </LinearLayout>
         </LinearLayout>
-    </LinearLayout>
 
-    <!-- Top Right HUD Card: Speed & ETA -->
-    <LinearLayout
-        android:id="@+id/layoutTripHud"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top|end"
-        android:layout_marginTop="28dp"
-        android:layout_marginEnd="40dp"
-        android:background="#CC111822"
-        android:orientation="horizontal"
-        android:paddingStart="24dp"
-        android:paddingTop="16dp"
-        android:paddingEnd="24dp"
-        android:paddingBottom="16dp">
+        <!-- Divider Line (Neusoft .border-color) -->
+        <View
+            android:layout_width="352px"
+            android:layout_height="1px"
+            android:layout_gravity="center_horizontal"
+            android:background="#33FFFFFF" />
 
+        <!-- Bottom Trip & ETA Row (Neusoft .maneuer-arrive: 352px x 50px) -->
         <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:orientation="vertical">
+            android:id="@+id/layoutTripRow"
+            android:layout_width="352px"
+            android:layout_height="50px"
+            android:layout_gravity="center_horizontal"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
+            <!-- Tachimetro compatibile cruscotto -->
             <TextView
                 android:id="@+id/tvCurrentSpeed"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="0"
                 android:textColor="#00E5FF"
-                android:textSize="36sp"
+                android:textSize="20sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="KM/H"
+                android:layout_marginStart="4px"
+                android:text="km/h"
                 android:textColor="#78909C"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-        </LinearLayout>
+                android:textSize="11sp" />
 
-        <View
-            android:layout_width="1dp"
-            android:layout_height="40dp"
-            android:layout_gravity="center_vertical"
-            android:layout_marginStart="20dp"
-            android:layout_marginEnd="20dp"
-            android:background="#37474F" />
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1px"
+                android:layout_weight="1" />
 
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="start|center_vertical"
-            android:orientation="vertical">
-
+            <!-- Orario Arrivo (ETA) -->
             <TextView
                 android:id="@+id/tvEta"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="--:--"
-                android:textColor="#FFFFFF"
-                android:textSize="24sp"
+                android:textColor="#0FA0F6"
+                android:textSize="17sp"
                 android:textStyle="bold" />
 
+            <!-- Tempo & Distanza residua -->
             <TextView
                 android:id="@+id/tvRemainingDistance"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginStart="10px"
                 android:text="-- km"
                 android:textColor="#B0BEC5"
-                android:textSize="16sp" />
+                android:textSize="14sp" />
         </LinearLayout>
+
     </LinearLayout>
 
-    <!-- Bottom Status Indicator -->
+    <!-- Bottom Status Indicator (Centrato in basso a 16px) -->
     <TextView
         android:id="@+id/tvClusterStatus"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="16px"
         android:background="#99000000"
-        android:paddingStart="16dp"
-        android:paddingTop="6dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="6dp"
+        android:paddingStart="16px"
+        android:paddingTop="4px"
+        android:paddingEnd="16px"
+        android:paddingBottom="4px"
         android:text="BYD Cluster Nav • Live"
         android:textColor="#607D8B"
-        android:textSize="13sp" />
+        android:textSize="12sp" />
 
 </FrameLayout>
