@@ -8,11 +8,11 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.location.Location
 import android.os.Bundle
+import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.Display
 import android.view.Gravity
-import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -59,7 +59,9 @@ import kotlin.math.roundToInt
  */
 class ClusterPresentation(
     outerContext: Context,
-    display: Display
+    display: Display,
+    initialMode: Int = ClusterCommBridge.MODE_GRANDE,
+    private val useOverlayWindowType: Boolean = false
 ) : Presentation(outerContext, display) {
 
     companion object {
@@ -68,9 +70,9 @@ class ClusterPresentation(
         private const val ROUTE_SOURCE_ID = "byd-route-source"
         private const val ROUTE_CASING_LAYER_ID = "byd-route-casing-layer"
         private const val ROUTE_LINE_LAYER_ID = "byd-route-line-layer"
+        private const val MAX_MAP_FPS = 20
     }
 
-    private var presentationTextureView: TextureView? = null
     private var mapContainer: FrameLayout? = null
     private var hudCard: LinearLayout? = null
     private var ivManeuverIcon: ImageView? = null
@@ -84,8 +86,10 @@ class ClusterPresentation(
 
     private var mapView: MapView? = null
     private var mapLibreMap: MapLibreMap? = null
+    private var isMapStopped: Boolean = false
+    private var isClosing: Boolean = false
 
-    private var currentMode: Int = ClusterCommBridge.MODE_GRANDE
+    private var currentMode: Int = initialMode
     private var currentNavState: NavState = NavState()
     private var lastLocation: Location? = null
     private var lastRouteGeoJson: String? = null
@@ -125,14 +129,16 @@ class ClusterPresentation(
         super.onCreate(savedInstanceState)
 
         window?.apply {
-            setType(
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                } else {
-                    @Suppress("DEPRECATION")
-                    WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
-                }
-            )
+            if (useOverlayWindowType) {
+                setType(
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    } else {
+                        @Suppress("DEPRECATION")
+                        WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
+                    }
+                )
+            }
             addFlags(
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -145,7 +151,6 @@ class ClusterPresentation(
 
         setContentView(R.layout.activity_cluster_map)
 
-        presentationTextureView = findViewById(R.id.presentationMapTextureView)
         mapContainer = findViewById(R.id.mapContainer)
         hudCard = findViewById(R.id.layoutCenterClusterHud)
         ivManeuverIcon = findViewById(R.id.ivManeuverIcon)
@@ -167,9 +172,47 @@ class ClusterPresentation(
         // Nascondi la barra di stato inferiore di debug per massimizzare la pulizia visiva sul cluster
         tvClusterStatus?.visibility = View.GONE
 
-        initMapLibre(savedInstanceState)
+        if (requiresMapRendering(currentMode)) {
+            ensureMapActive(savedInstanceState)
+        }
         applyModeLayout()
         renderNavState(currentNavState)
+    }
+
+    private fun requiresMapRendering(mode: Int): Boolean {
+        return mode == ClusterCommBridge.MODE_PICCOLO || mode == ClusterCommBridge.MODE_GRANDE
+    }
+
+    private fun ensureMapActive(savedInstanceState: Bundle? = null) {
+        if (isClosing) return
+        val existing = mapView
+        if (existing == null) {
+            initMapLibre(savedInstanceState)
+        } else if (isMapStopped) {
+            try {
+                mapContainer?.visibility = View.VISIBLE
+                existing.onStart()
+                existing.onResume()
+                isMapStopped = false
+            } catch (e: Exception) {
+                Log.w(TAG, "Error resuming MapLibre MapView: ${e.message}")
+            }
+        }
+    }
+
+    private fun pauseAndStopMap() {
+        val existing = mapView ?: return
+        try {
+            mapLibreMap?.cancelTransitions()
+            existing.onPause()
+            if (!isMapStopped) {
+                existing.onStop()
+                isMapStopped = true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error stopping MapLibre MapView: ${e.message}")
+        }
+        mapContainer?.visibility = View.GONE
     }
 
     private fun initMapLibre(savedInstanceState: Bundle?) {
@@ -187,6 +230,7 @@ class ClusterPresentation(
 
             val mv = MapView(context, options)
             mapView = mv
+            isMapStopped = false
             mapContainer?.removeAllViews()
             mapContainer?.addView(
                 mv,
@@ -198,12 +242,15 @@ class ClusterPresentation(
             mapContainer?.visibility = View.VISIBLE
 
             mv.onCreate(savedInstanceState)
+            mv.setMaximumFps(MAX_MAP_FPS)
             mv.onStart()
             mv.onResume()
 
             mv.getMapAsync { map ->
+                if (isClosing) return@getMapAsync
                 mapLibreMap = map
                 map.setStyle(Style.Builder().fromUri(STYLE_URL)) { style ->
+                    if (isClosing) return@setStyle
                     Log.i(TAG, "MapLibre Dark-Matter style loaded on Display 1")
                     setupRouteLayers(style)
                     enableLocationComponent(map, style)
@@ -280,6 +327,8 @@ class ClusterPresentation(
         try {
             // Disabilita pulseEnabled, accuracyAnimation e background/shadow per eliminare
             // definitivamente ogni pallino o alone circolare sotto la freccia 3D di navigazione.
+            // NON impostare bearingTintColor o foregroundTintColor a Color.TRANSPARENT, altrimenti
+            // BitmapUtils.getDrawableFromRes applica setTint(0x00000000) rendendo il cursore invisibile!
             val locationOptions = LocationComponentOptions.builder(context)
                 .pulseEnabled(false)
                 .accuracyAnimationEnabled(false)
@@ -288,9 +337,6 @@ class ClusterPresentation(
                 .gpsDrawable(R.drawable.ic_nav_cursor_arrow)
                 .foregroundDrawable(R.drawable.ic_nav_cursor_arrow)
                 .backgroundDrawable(android.R.color.transparent)
-                .bearingTintColor(Color.TRANSPARENT)
-                .backgroundTintColor(Color.TRANSPARENT)
-                .foregroundTintColor(Color.TRANSPARENT)
                 .enableStaleState(false)
                 .elevation(0f)
                 .build()
@@ -340,7 +386,7 @@ class ClusterPresentation(
 
         when (currentMode) {
             ClusterCommBridge.MODE_PICCOLO -> {
-                presentationTextureView?.visibility = View.VISIBLE
+                ensureMapActive()
                 mapContainer?.visibility = View.VISIBLE
 
                 lp.width = 400
@@ -369,9 +415,8 @@ class ClusterPresentation(
 
             ClusterCommBridge.MODE_SEMPLICE -> {
                 // In modalità Semplice: card HUD attiva ad alto contrasto su sfondo nero OLED
-                // e mappa spenta (zero carico GPU).
-                presentationTextureView?.visibility = View.GONE
-                mapContainer?.visibility = View.GONE
+                // e render thread MapLibre realmente fermato (zero carico GPU / Adreno GSL_RPC).
+                pauseAndStopMap()
 
                 lp.width = 400
                 lp.height = FrameLayout.LayoutParams.WRAP_CONTENT
@@ -385,7 +430,7 @@ class ClusterPresentation(
 
             else -> {
                 // MODE_GRANDE (4) / MODE_INTERO
-                presentationTextureView?.visibility = View.VISIBLE
+                ensureMapActive()
                 mapContainer?.visibility = View.VISIBLE
 
                 val mapLp = (mapContainer?.layoutParams as? FrameLayout.LayoutParams)
@@ -412,18 +457,28 @@ class ClusterPresentation(
             }
         }
 
-        lastLocation?.let { updateMapCamera(it) }
+        if (requiresMapRendering(currentMode)) {
+            lastLocation?.let { updateMapCamera(it) }
+        }
     }
 
     fun onLocationChanged(location: Location) {
+        if (isClosing) return
         lastLocation = location
         val speedKmh = if (location.hasSpeed()) (location.speed * 3.6f).roundToInt() else 0
         tvCurrentSpeed?.text = speedKmh.toString()
-        updateMapCamera(location)
+        if (requiresMapRendering(currentMode)) {
+            updateMapCamera(location)
+        }
         triggerRouteFetchIfPossible()
     }
 
     private fun updateMapCamera(location: Location) {
+        if (isClosing || isMapStopped || !requiresMapRendering(currentMode) ||
+            mapContainer?.visibility != View.VISIBLE || !isShowing
+        ) {
+            return
+        }
         val map = mapLibreMap ?: return
         try {
             if (map.locationComponent.isLocationComponentActivated) {
@@ -444,21 +499,80 @@ class ClusterPresentation(
         map.animateCamera(CameraUpdateFactory.newCameraPosition(camPos), 650)
     }
 
+    fun onAuthoritativeRouteUpdated(sourcePackage: String, geoJson: String?) {
+        if (isClosing) return
+        val activePkg = currentNavState.sourcePackage
+        val appliesToCurrent = !currentNavState.isActive || activePkg.isBlank() || activePkg == sourcePackage
+        if (!appliesToCurrent) return
+
+        if (!geoJson.isNullOrBlank()) {
+            if (lastRouteGeoJson != geoJson) {
+                drawRouteGeoJson(geoJson)
+            }
+        } else {
+            clearRoutePolyline()
+        }
+    }
+
     private fun triggerRouteFetchIfPossible() {
-        val loc = lastLocation ?: return
         val state = currentNavState
+
+        // 1. Priorità assoluta all'itinerario 1:1 nativo (es. ABRP Mapbox ShapeSource bridge)
+        val candidatePkg = state.sourcePackage.ifBlank {
+            if (!state.isActive && RouteFetcher.getAuthoritativeRoute("com.iternio.abrpapp") != null) {
+                "com.iternio.abrpapp"
+            } else {
+                ""
+            }
+        }
+        val authRoute = RouteFetcher.getAuthoritativeRoute(candidatePkg)
+        if (authRoute != null) {
+            val freshPreview = !state.isActive && (System.currentTimeMillis() - authRoute.updatedAtMs) < 300_000L
+            if (state.isActive || freshPreview) {
+                if (lastRouteGeoJson != authRoute.geoJson) {
+                    drawRouteGeoJson(authRoute.geoJson)
+                }
+                updateTripRowWithFallback(state, null)
+                return
+            }
+        }
+
         if (!state.isActive && state.distance.isBlank() && state.instruction.isBlank()) {
             return
         }
 
+        // 2. Se l'app attiva non espone un indirizzo destinazione realmente geocodificabile
+        //    (es. HERE WeGo con sola prossima svolta, o etichetta simbolica "Viaggio verso Lavoro"),
+        //    NON inventare percorsi OSRM sulla via della prossima manovra: pulisci eventuali tracce vecchie.
+        val targetQuery = RouteFetcher.extractTargetQuery(state.destination)
+        if (targetQuery.isEmpty()) {
+            RouteFetcher.clearRoute()
+            if (lastRouteGeoJson != null) {
+                clearRoutePolyline()
+            }
+            updateTripRowWithFallback(state, null)
+            return
+        }
+
+        val loc = lastLocation ?: return
+
+        // 3. Fallback OSRM verificato con filtro fisico di coerenza sulla distanza residua
         RouteFetcher.fetchRouteIfNeeded(
             currentLat = loc.latitude,
             currentLon = loc.longitude,
             destination = state.destination,
-            instruction = state.instruction
+            instruction = state.instruction,
+            remainingTimeDistance = state.remainingTimeDistance,
+            onNoRoute = {
+                if (RouteFetcher.getAuthoritativeRoute(currentNavState.sourcePackage) == null && lastRouteGeoJson != null) {
+                    clearRoutePolyline()
+                }
+            }
         ) { routeResult ->
-            drawRouteGeoJson(routeResult.geoJsonFeature)
-            updateTripRowWithFallback(currentNavState, routeResult)
+            if (RouteFetcher.getAuthoritativeRoute(currentNavState.sourcePackage) == null) {
+                drawRouteGeoJson(routeResult.geoJsonFeature)
+                updateTripRowWithFallback(currentNavState, routeResult)
+            }
         }
     }
 
@@ -483,6 +597,7 @@ class ClusterPresentation(
     }
 
     fun updateNavState(state: NavState) {
+        if (isClosing) return
         currentNavState = state
         renderNavState(state)
     }
@@ -490,7 +605,14 @@ class ClusterPresentation(
     private fun renderNavState(state: NavState) {
         if (!state.isActive && state.distance.isBlank() && state.instruction.isBlank()) {
             RouteFetcher.clearRoute()
-            clearRoutePolyline()
+            val previewAuth = RouteFetcher.getAuthoritativeRoute("com.iternio.abrpapp")
+            if (previewAuth != null && (System.currentTimeMillis() - previewAuth.updatedAtMs) < 300_000L) {
+                if (lastRouteGeoJson != previewAuth.geoJson) {
+                    drawRouteGeoJson(previewAuth.geoJson)
+                }
+            } else {
+                clearRoutePolyline()
+            }
             tvManeuverDistance?.text = "Pronto"
             tvStreetName?.text = "In attesa di indicazioni..."
             tvEta?.text = "--:--"
@@ -535,10 +657,42 @@ class ClusterPresentation(
         }
     }
 
+    /**
+     * Chiusura sicura a due fasi per evitare il freeze da 30s sul Main Thread di Qualcomm Adreno:
+     * 1. Ferma GLTextureViewRenderThread (cancelTransitions + onPause + onStop) MENTRE la Surface
+     *    della finestra Presentation è ancora viva, così eglSwapBuffers non va in deadlock sul fence.
+     * 2. Dopo 80ms distrugge MapView e chiude la Presentation.
+     * Se MapView non è mai stata istanziata (es. MODE_SEMPLICE), chiude istantaneamente.
+     */
+    fun closeSafely(handler: Handler) {
+        if (isClosing) return
+        isClosing = true
+        if (mapView == null) {
+            cleanup()
+            try {
+                if (isShowing) dismiss()
+            } catch (_: Exception) {}
+            return
+        }
+
+        pauseAndStopMap()
+        hudCard?.visibility = View.GONE
+
+        handler.postDelayed({
+            cleanup()
+            try {
+                if (isShowing) dismiss()
+            } catch (_: Exception) {}
+        }, 80L)
+    }
+
     fun cleanup() {
+        isClosing = true
+        pauseAndStopMap()
         try {
-            mapView?.onPause()
-            mapView?.onStop()
+            mapContainer?.removeAllViews()
+        } catch (_: Exception) {}
+        try {
             mapView?.onDestroy()
         } catch (_: Exception) {}
         mapView = null

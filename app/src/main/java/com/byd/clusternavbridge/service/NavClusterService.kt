@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
@@ -18,14 +19,19 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
+import android.os.UserManager
 import android.provider.Settings
 import android.util.Log
+import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.byd.clusternavbridge.R
 import com.byd.clusternavbridge.cluster.ClusterCommBridge
 import com.byd.clusternavbridge.model.NavState
 import com.byd.clusternavbridge.power.VehiclePowerMonitor
+import com.byd.clusternavbridge.receiver.TbtBroadcastReceiver
+import com.byd.clusternavbridge.route.RouteFetcher
 import com.byd.clusternavbridge.ui.ClusterPresentation
 import com.byd.clusternavbridge.ui.FloatingPillView
 import com.byd.clusternavbridge.ui.MainActivity
@@ -85,6 +91,25 @@ class NavClusterService : Service(), LocationListener {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var floatingPill: FloatingPillView? = null
     private var clusterPresentation: ClusterPresentation? = null
+    private val dynamicTbtReceiver = TbtBroadcastReceiver()
+    private var isDynamicTbtReceiverRegistered: Boolean = false
+    private var lastLocationDispatchUptimeMs: Long = 0L
+    private var lastA11yHealAttemptUptimeMs: Long = 0L
+    private var a11yHealCheckScheduled: Boolean = false
+
+    private fun getSafePrefs(): android.content.SharedPreferences {
+        val storageCtx = try {
+            val um = getSystemService(UserManager::class.java)
+            if (um != null && !um.isUserUnlocked) {
+                createDeviceProtectedStorageContext()
+            } else {
+                this
+            }
+        } catch (_: Exception) {
+            createDeviceProtectedStorageContext()
+        }
+        return storageCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
 
     var lastKnownLocation: Location? = null
         private set
@@ -101,7 +126,7 @@ class NavClusterService : Service(), LocationListener {
         super.onCreate()
         Log.w(TAG, "NavClusterService onCreate (v1.5.9 Multi-Modale QNX Proto + OSRM Route + 3D Cursor)")
 
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = getSafePrefs()
         currentMode = prefs.getInt(KEY_PREFERRED_MODE, ClusterCommBridge.MODE_SEMPLICE)
 
         clusterBridge = ClusterCommBridge(this)
@@ -134,14 +159,48 @@ class NavClusterService : Service(), LocationListener {
         // Imposta instance SOLO dopo che clusterBridge, voiceManager e powerMonitor sono inizializzati!
         instance = this
 
+        try {
+            ContextCompat.registerReceiver(
+                this,
+                dynamicTbtReceiver,
+                IntentFilter(TbtBroadcastReceiver.ACTION_TBT_UPDATE),
+                ContextCompat.RECEIVER_EXPORTED
+            )
+            isDynamicTbtReceiverRegistered = true
+            Log.i(TAG, "Registered dynamic TbtBroadcastReceiver for implicit ABRP TBT_UPDATE + 1:1 Route GeoJSON")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed registering dynamic TbtBroadcastReceiver: ${e.message}")
+        }
+
         createNotificationChannel()
         val notification = buildForegroundNotification("Navigazione Cluster DiLink attiva")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
+            val hasFineOrCoarse = ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED || ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            val hasBgLoc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+            } else {
+                true
+            }
+            val fgsType = if (hasFineOrCoarse && hasBgLoc) {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            )
+            } else {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            }
+            try {
+                startForeground(NOTIFICATION_ID, notification, fgsType)
+            } catch (e: Exception) {
+                Log.w(TAG, "Fallback startForeground without explicit FGS type: ${e.message}")
+                startForeground(NOTIFICATION_ID, notification)
+            }
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -247,16 +306,26 @@ class NavClusterService : Service(), LocationListener {
     }
 
     override fun onLocationChanged(location: Location) {
+        val nowUptime = SystemClock.uptimeMillis()
+        if (lastLocationDispatchUptimeMs > 0L && (nowUptime - lastLocationDispatchUptimeMs) < 650L) {
+            lastKnownLocation = location
+            return
+        }
+        lastLocationDispatchUptimeMs = nowUptime
         lastKnownLocation = location
         clusterPresentation?.onLocationChanged(location)
         if (currentMode == ClusterCommBridge.MODE_SEMPLICE &&
-            (currentNavState.isActive || currentNavState.instruction.isNotBlank())
+            (currentNavState.isActive || currentNavState.instruction.isNotBlank()) &&
+            RouteFetcher.getAuthoritativeRoute(currentNavState.sourcePackage) == null &&
+            currentNavState.remainingTimeDistance.isBlank() &&
+            RouteFetcher.extractTargetQuery(currentNavState.destination).isNotEmpty()
         ) {
-            com.byd.clusternavbridge.route.RouteFetcher.fetchRouteIfNeeded(
+            RouteFetcher.fetchRouteIfNeeded(
                 currentLat = location.latitude,
                 currentLon = location.longitude,
                 destination = currentNavState.destination,
-                instruction = currentNavState.instruction
+                instruction = currentNavState.instruction,
+                remainingTimeDistance = currentNavState.remainingTimeDistance
             ) {
                 clusterBridge.sendTbtInfo(getEffectiveSimpleTbtState())
             }
@@ -267,15 +336,28 @@ class NavClusterService : Service(), LocationListener {
     override fun onProviderEnabled(provider: String) {}
     override fun onProviderDisabled(provider: String) {}
 
+    /**
+     * Abilita e auto-ripara NavAccessibilityService:
+     * - Se assente da ENABLED_ACCESSIBILITY_SERVICES, lo aggiunge mentre NavClusterService è attivo
+     *   (soddisfacendo il gate BYD DiLink `isTargetAppEnabledStartedBy3rd` -> `isAppRunning(uid)`).
+     * - Se è già presente in ENABLED_ACCESSIBILITY_SERVICES ma NON connesso (`!NavAccessibilityService.isConnected`,
+     *   caso tipico di `mCrashedServices` dopo kill del processo da parte del cleaner BYD), esegue un ciclo
+     *   controllato di rimozione + ri-aggiunta (450ms) per forzare Android 11 a svuotare `mCrashedServices`
+     *   e fare subito `bindServiceAsUser`.
+     */
     private fun ensureAccessibilityServiceEnabled() {
         try {
             val component = "${packageName}/${NavAccessibilityService::class.java.name}"
+            val shortComponent = "${packageName}/.service.NavAccessibilityService"
             val current = Settings.Secure.getString(
                 contentResolver,
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
             ) ?: ""
-            if (!current.contains(component)) {
-                val updated = if (current.isBlank()) component else "$current:$component"
+            val entries = current.split(':').map { it.trim() }.filter { it.isNotEmpty() }
+            val isListed = entries.any { it == component || it == shortComponent }
+
+            if (!isListed) {
+                val updated = (entries + component).joinToString(":")
                 Settings.Secure.putString(
                     contentResolver,
                     Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
@@ -283,6 +365,62 @@ class NavClusterService : Service(), LocationListener {
                 )
                 Settings.Secure.putInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
                 Log.w(TAG, "Auto-enabled NavAccessibilityService in Settings.Secure: $updated")
+                return
+            }
+
+            if (!NavAccessibilityService.isConnected && !a11yHealCheckScheduled) {
+                val now = SystemClock.uptimeMillis()
+                if (lastA11yHealAttemptUptimeMs == 0L || (now - lastA11yHealAttemptUptimeMs) > 30_000L) {
+                    a11yHealCheckScheduled = true
+                    mainHandler.postDelayed({
+                        a11yHealCheckScheduled = false
+                        if (instance == null || NavAccessibilityService.isConnected) {
+                            return@postDelayed
+                        }
+                        try {
+                            lastA11yHealAttemptUptimeMs = SystemClock.uptimeMillis()
+                            val latest = Settings.Secure.getString(
+                                contentResolver,
+                                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                            ) ?: ""
+                            val withoutSelf = latest
+                                .split(':')
+                                .map { it.trim() }
+                                .filter { it.isNotEmpty() && it != component && it != shortComponent }
+                                .joinToString(":")
+                            Log.w(TAG, "Self-healing NavAccessibilityService (clearing mCrashedServices): stripping from Settings.Secure")
+                            Settings.Secure.putString(
+                                contentResolver,
+                                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                                withoutSelf
+                            )
+                            mainHandler.postDelayed({
+                                if (instance == null) return@postDelayed
+                                try {
+                                    val afterStrip = Settings.Secure.getString(
+                                        contentResolver,
+                                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                                    ) ?: ""
+                                    val rebuilt = (afterStrip.split(':')
+                                        .map { it.trim() }
+                                        .filter { it.isNotEmpty() && it != component && it != shortComponent } + component)
+                                        .joinToString(":")
+                                    Settings.Secure.putString(
+                                        contentResolver,
+                                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                                        rebuilt
+                                    )
+                                    Settings.Secure.putInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+                                    Log.w(TAG, "Self-healed NavAccessibilityService: re-added while process alive -> $rebuilt")
+                                } catch (e2: Exception) {
+                                    Log.w(TAG, "Failed re-adding NavAccessibilityService during self-heal: ${e2.message}")
+                                }
+                            }, 450L)
+                        } catch (e1: Exception) {
+                            Log.w(TAG, "Failed stripping NavAccessibilityService during self-heal: ${e1.message}")
+                        }
+                    }, 2500L)
+                }
             }
         } catch (e: Exception) {
             Log.d(TAG, "Could not auto-enable NavAccessibilityService: ${e.message}")
@@ -296,7 +434,7 @@ class NavClusterService : Service(), LocationListener {
         }
         Log.w(TAG, "Setting mode to $mode")
         currentMode = mode
-        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        getSafePrefs()
             .edit()
             .putInt(KEY_PREFERRED_MODE, mode)
             .apply()
@@ -323,11 +461,10 @@ class NavClusterService : Service(), LocationListener {
                 }, 180L)
             }
             ClusterCommBridge.MODE_SEMPLICE -> {
-                // In modalità Semplice manteniamo la Presentation HDMI su Display 1
-                // a zero carico GPU (mappa GONE) con Card HUD attiva su sfondo OLED nero puro,
-                // inviando parallelamente i pacchetti Protobuf nativi QNX (display_mode=2, MAP_STATE_SIMPLE_OPEN=7).
-                openClusterPresentation()
-                clusterPresentation?.updateMode(mode)
+                // In modalità Semplice chiudiamo la Presentation HDMI su Display 1
+                // per lasciare visibile il tachimetro e i quadranti nativi QNX senza layer coprenti,
+                // inviando esclusivamente i pacchetti Protobuf nativi QNX (display_mode=2, MAP_STATE_SIMPLE_OPEN=7).
+                closeClusterPresentation()
                 clusterBridge.switchClusterMode(mode)
                 val simpleState = getEffectiveSimpleTbtState()
                 clusterBridge.sendTbtInfo(simpleState)
@@ -360,10 +497,16 @@ class NavClusterService : Service(), LocationListener {
             return
         }
 
-        if (clusterPresentation != null && clusterPresentation?.isShowing == true) {
-            clusterPresentation?.updateNavState(currentNavState)
-            lastKnownLocation?.let { clusterPresentation?.onLocationChanged(it) }
-            return
+        val existing = clusterPresentation
+        if (existing != null) {
+            if (existing.isShowing) {
+                existing.updateNavState(currentNavState)
+                lastKnownLocation?.let { existing.onLocationChanged(it) }
+                return
+            } else {
+                existing.cleanup()
+                clusterPresentation = null
+            }
         }
 
         val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return
@@ -379,33 +522,80 @@ class NavClusterService : Service(), LocationListener {
 
         if (targetDisplay != null) {
             try {
-                clusterPresentation = ClusterPresentation(this, targetDisplay).apply {
-                    updateMode(currentMode)
+                clusterPresentation = ClusterPresentation(
+                    outerContext = this,
+                    display = targetDisplay,
+                    initialMode = currentMode,
+                    useOverlayWindowType = false
+                ).apply {
                     show()
                     updateNavState(currentNavState)
                     lastKnownLocation?.let { onLocationChanged(it) }
                 }
-                Log.i(TAG, "ClusterPresentation opened on display ${targetDisplay.displayId} (${targetDisplay.name}) with mode $currentMode")
+                Log.i(TAG, "ClusterPresentation opened (TYPE_PRESENTATION) on display ${targetDisplay.displayId} (${targetDisplay.name}) with mode $currentMode")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to open ClusterPresentation on display", e)
+                Log.w(TAG, "TYPE_PRESENTATION rejected on display ${targetDisplay.displayId} (${e.message}), retrying with overlay fallback")
+                clusterPresentation?.cleanup()
+                clusterPresentation = null
+                if (Settings.canDrawOverlays(this)) {
+                    try {
+                        clusterPresentation = ClusterPresentation(
+                            outerContext = this,
+                            display = targetDisplay,
+                            initialMode = currentMode,
+                            useOverlayWindowType = true
+                        ).apply {
+                            show()
+                            updateNavState(currentNavState)
+                            lastKnownLocation?.let { onLocationChanged(it) }
+                        }
+                        Log.i(TAG, "ClusterPresentation opened (TYPE_APPLICATION_OVERLAY fallback) on display ${targetDisplay.displayId} with mode $currentMode")
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Failed to open ClusterPresentation on display", e2)
+                    }
+                }
             }
         } else {
             Log.w(TAG, "No secondary display available for presentation")
         }
     }
 
-    private fun closeClusterPresentation() {
+    private fun closeClusterPresentation(immediate: Boolean = false) {
+        val pres = clusterPresentation ?: return
+        clusterPresentation = null
         try {
-            clusterPresentation?.dismiss()
-            clusterPresentation?.cleanup()
+            if (immediate) {
+                pres.cleanup()
+                if (pres.isShowing) {
+                    pres.dismiss()
+                }
+            } else {
+                pres.closeSafely(mainHandler)
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Error dismissing presentation: ${e.message}")
-        } finally {
-            clusterPresentation = null
+        }
+    }
+
+    fun onAuthoritativeRouteUpdated(sourcePackage: String, geoJson: String?) {
+        mainHandler.post {
+            clusterPresentation?.onAuthoritativeRouteUpdated(sourcePackage, geoJson)
         }
     }
 
     fun onNavStateChanged(state: NavState) {
+        val prevState = currentNavState
+        if (prevState.isActive && !state.isActive) {
+            RouteFetcher.clearRoute()
+            if (prevState.sourcePackage.isNotBlank()) {
+                RouteFetcher.clearAuthoritativeRoute(prevState.sourcePackage)
+            }
+        } else if (state.isActive && prevState.isActive &&
+            prevState.sourcePackage.isNotBlank() && state.sourcePackage.isNotBlank() &&
+            prevState.sourcePackage != state.sourcePackage
+        ) {
+            RouteFetcher.clearRoute()
+        }
         currentNavState = state
         Log.w(TAG, "onNavStateChanged: active=${state.isActive}, mode=$currentMode, instr='${state.instruction}', dist='${state.distance}', dest='${state.destination}'")
 
@@ -475,12 +665,18 @@ class NavClusterService : Service(), LocationListener {
     override fun onDestroy() {
         super.onDestroy()
         Log.i(TAG, "NavClusterService onDestroy")
+        if (isDynamicTbtReceiverRegistered) {
+            try {
+                unregisterReceiver(dynamicTbtReceiver)
+            } catch (_: Exception) {}
+            isDynamicTbtReceiverRegistered = false
+        }
         try {
             locationManager?.removeUpdates(this)
         } catch (_: Exception) {}
         voiceManager.shutdown()
         powerMonitor.stop()
-        closeClusterPresentation()
+        closeClusterPresentation(immediate = true)
         floatingPill?.hide()
         clusterBridge.switchClusterMode(ClusterCommBridge.MODE_OFF)
         clusterBridge.unbindService()
@@ -494,7 +690,7 @@ class NavClusterService : Service(), LocationListener {
             Log.i(TAG, "Vehicle is OFF; floating pill deferred")
             return
         }
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = getSafePrefs()
         val pillEnabled = prefs.getBoolean(KEY_FLOATING_PILL_ENABLED, false) // Default: SPENTO!
 
         if (Settings.canDrawOverlays(this)) {
@@ -529,7 +725,7 @@ class NavClusterService : Service(), LocationListener {
 
     fun toggleFloatingPill(): Boolean {
         if (!Settings.canDrawOverlays(this)) return false
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = getSafePrefs()
         val isShowing = floatingPill?.isShowing == true
         val newState = !isShowing
         prefs.edit().putBoolean(KEY_FLOATING_PILL_ENABLED, newState).apply()

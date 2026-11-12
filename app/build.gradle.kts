@@ -11,10 +11,13 @@ android {
         applicationId = "com.byd.clusternavbridge"
         minSdk = 29
         targetSdk = 30
-        versionCode = 16
-        versionName = "1.6.0"
+        versionCode = 17
+        versionName = "1.6.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     signingConfigs {
@@ -54,9 +57,19 @@ android {
         buildConfig = true
     }
 
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     lint {
         checkReleaseBuilds = false
         abortOnError = false
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 
@@ -66,4 +79,5 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation("org.maplibre.gl:android-sdk:11.5.0")
+    testImplementation("junit:junit:4.13.2")
 }

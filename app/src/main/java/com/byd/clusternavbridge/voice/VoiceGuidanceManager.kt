@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.media.AudioAttributes
 import android.os.Bundle
+import android.os.UserManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -33,6 +34,17 @@ class VoiceGuidanceManager(
         private val GENERIC_STATUS_PHRASES = listOf(
             "navigazione in corso",
             "in navigazione",
+            "navigazione attiva",
+            "navigazione vocale",
+            "navigazione here wego attiva",
+            "navigazione abrp attiva",
+            "navigazione google maps attiva",
+            "in attesa di indicazioni...",
+            "in attesa di indicazioni",
+            "navbridge pronto",
+            "pronto",
+            "prosegui sul percorso",
+            "segui il percorso",
             "ricalcolo del percorso",
             "ricalcolo",
             "ricerca segnale gps",
@@ -41,9 +53,23 @@ class VoiceGuidanceManager(
             "percorso aggiornato",
             "fine della navigazione"
         )
+
+        private fun resolveSafePrefs(ctx: Context): SharedPreferences {
+            val storageCtx = try {
+                val um = ctx.getSystemService(UserManager::class.java)
+                if (um != null && !um.isUserUnlocked) {
+                    ctx.createDeviceProtectedStorageContext()
+                } else {
+                    ctx
+                }
+            } catch (_: Exception) {
+                ctx.createDeviceProtectedStorageContext()
+            }
+            return storageCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        }
     }
 
-    private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = resolveSafePrefs(context)
     private var tts: TextToSpeech? = null
     private var isReady = false
 
@@ -129,10 +155,14 @@ class VoiceGuidanceManager(
         }
 
         // Se è l'inizio del percorso e abbiamo una destinazione valida, possiamo fare l'annuncio iniziale una tantum
-        if (!hasAnnouncedRouteStart && destination.isNotBlank()) {
+        if (!hasAnnouncedRouteStart && destination.isNotBlank() && !isGenericNonManeuver(destination)) {
             hasAnnouncedRouteStart = true
             val cleanDest = destination.replace(Regex("^(Verso\\s+|Viaggio verso\\s+|Viaggio per\\s+|Trip to\\s+|Destinazione:\\s*|Direzione\\s+)", RegexOption.IGNORE_CASE), "").trim()
-            val startPhrase = if (cleanDest.isNotBlank()) "Navigazione avviata verso $cleanDest" else "Navigazione avviata"
+            val startPhrase = if (cleanDest.isNotBlank() && !isGenericNonManeuver(cleanDest)) {
+                "Navigazione avviata verso $cleanDest"
+            } else {
+                "Navigazione avviata"
+            }
             speak(startPhrase)
             lastSpokenTimestamp = System.currentTimeMillis()
         }

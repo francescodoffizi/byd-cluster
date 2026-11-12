@@ -21,6 +21,7 @@
         <package android:name="com.ts.appservice.cluster" />
         <package android:name="app.revanced.android.apps.maps" />
         <package android:name="com.google.android.apps.maps" />
+        <package android:name="app.morphe.android.apps.maps.automotive" />
         <package android:name="com.iternio.abrpapp" />
         <package android:name="com.here.app.maps" />
         <package android:name="net.osmand" />

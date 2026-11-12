@@ -2,6 +2,7 @@ package com.byd.clusternavbridge.service
 
 import android.app.Notification
 import android.os.Bundle
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -26,6 +27,7 @@ class NavNotificationListener : NotificationListenerService() {
         val TARGET_PACKAGES = setOf(
             "app.revanced.android.apps.maps",
             "com.google.android.apps.maps",
+            "app.morphe.android.apps.maps.automotive",
             "com.iternio.abrpapp",
             "com.here.app.maps",
             "net.osmand",
@@ -93,7 +95,12 @@ class NavNotificationListener : NotificationListenerService() {
                 }
             }
             if (!foundActive) {
-                NavClusterService.instance?.onNavStateChanged(NavState(isActive = false))
+                val a11yRecentlyActive = NavAccessibilityService.isConnected &&
+                    NavAccessibilityService.lastActiveUptimeMs > 0L &&
+                    (SystemClock.uptimeMillis() - NavAccessibilityService.lastActiveUptimeMs) < 15_000L
+                if (!a11yRecentlyActive) {
+                    NavClusterService.instance?.onNavStateChanged(NavState(isActive = false))
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error checking active notifications: ${e.message}")
@@ -110,17 +117,22 @@ class NavNotificationListener : NotificationListenerService() {
         }
 
         val extras: Bundle = notification.extras ?: return false
-        var title = (extras.getCharSequence(Notification.EXTRA_TITLE)
-            ?: extras.getCharSequence(Notification.EXTRA_TITLE_BIG))?.toString()?.trim() ?: ""
-        var text = (extras.getCharSequence(Notification.EXTRA_TEXT)
-            ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT))?.toString()?.trim() ?: ""
-        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim() ?: ""
+        var title = normalizeSpaces(
+            (extras.getCharSequence(Notification.EXTRA_TITLE)
+                ?: extras.getCharSequence(Notification.EXTRA_TITLE_BIG))?.toString() ?: ""
+        )
+        var text = normalizeSpaces(
+            (extras.getCharSequence(Notification.EXTRA_TEXT)
+                ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT))?.toString() ?: ""
+        )
+        val subText = normalizeSpaces(extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString() ?: "")
 
         val isAbrp = (pkg == "com.iternio.abrpapp")
         val isHereMaps = (pkg == "com.here.app.maps")
         val appName = when (pkg) {
-            "app.revanced.android.apps.maps" -> "Google Maps"
-            "com.google.android.apps.maps" -> "Google Maps"
+            "app.revanced.android.apps.maps",
+            "com.google.android.apps.maps",
+            "app.morphe.android.apps.maps.automotive" -> "Google Maps"
             "com.iternio.abrpapp" -> "ABRP"
             "com.here.app.maps" -> "HERE WeGo"
             "net.osmand", "net.osmand.plus" -> "OsmAnd"
@@ -290,11 +302,32 @@ class NavNotificationListener : NotificationListenerService() {
         }
 
         // Se la notifica è ongoing su un canale di guida attivo (es. HERE WeGo in primo piano con "Navigazione vocale"),
-        // mantieni la sessione attiva con un'etichetta di destinazione pulita in attesa della prima manovra.
+        // mantieni la sessione attiva senza fabbricare una finta destinazione geocodificabile (evita loop RouteFetcher).
         if (instruction.isEmpty() && destination.isEmpty() && distance.isEmpty() &&
             (isHereMaps || isAbrp) && (isGenericStatus(title) || isGenericStatus(text))
         ) {
-            destination = "Navigazione $appName attiva"
+            if (currentState != null && currentState.isActive && currentState.sourcePackage == pkg &&
+                (currentState.instruction.isNotEmpty() || currentState.distance.isNotEmpty())
+            ) {
+                instruction = currentState.instruction
+                distance = currentState.distance
+                destination = currentState.destination
+                if (eta.isEmpty()) eta = currentState.eta
+                if (remaining.isEmpty()) remaining = currentState.remainingTimeDistance
+            } else {
+                val keepAliveState = NavState(
+                    isActive = true,
+                    sourcePackage = pkg,
+                    sourceName = appName,
+                    distance = "",
+                    instruction = "In attesa di indicazioni...",
+                    destination = "",
+                    eta = eta,
+                    remainingTimeDistance = remaining
+                )
+                NavClusterService.instance?.onNavStateChanged(keepAliveState)
+                return true
+            }
         }
 
         // Se non abbiamo ancora un'istruzione di svolta ma abbiamo una destinazione e siamo attivi
@@ -337,7 +370,10 @@ class NavNotificationListener : NotificationListenerService() {
                 lower.startsWith("arrivo a ") ||
                 lower.startsWith("arrivo ") ||
                 lower.startsWith("arriving at ") ||
-                lower == "casa" || lower == "lavoro" || lower == "home" || lower == "work"
+                lower == "casa" || lower == "lavoro" || lower == "ufficio" ||
+                lower == "palestra" || lower == "scuola" || lower == "preferito" ||
+                lower == "posizione salvata" ||
+                lower == "home" || lower == "work" || lower == "office"
         if (!isDest) return false
         val hasManeuver = listOf(
             "svolta", "gira", "prendi", "esci", "uscita", "rotonda", "rotatoria",
@@ -527,9 +563,17 @@ class NavNotificationListener : NotificationListenerService() {
         }
     }
 
+    private fun normalizeSpaces(raw: String): String {
+        return raw
+            .replace('\u00A0', ' ')
+            .replace('\u202F', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
     private fun extractTextsFromView(view: View, out: MutableList<String>) {
         if (view is TextView) {
-            val t = view.text?.toString()?.trim()
+            val t = view.text?.toString()?.let { normalizeSpaces(it) }
             if (!t.isNullOrEmpty() && isValidUserText(t) && !out.contains(t)) {
                 out.add(t)
             }
@@ -553,16 +597,23 @@ class NavNotificationListener : NotificationListenerService() {
     }
 
     private fun isGenericStatus(text: String): Boolean {
-        val lower = text.lowercase(java.util.Locale.ITALIAN).trim()
+        val lower = normalizeSpaces(text).lowercase(java.util.Locale.ITALIAN)
+        if (Regex("^navigazione\\b.*\\battiva$").matches(lower)) return true
         return lower == "abrp" ||
                 lower == "a better routeplanner" ||
                 lower == "here wego" ||
                 lower == "google maps" ||
                 lower == "maps" ||
                 lower == "osmand" ||
+                lower == "waze" ||
                 lower == "navigazione" ||
                 lower == "navigazione attiva" ||
                 lower == "navigazione vocale" ||
+                lower == "navbridge pronto" ||
+                lower == "in attesa di indicazioni..." ||
+                lower == "in attesa di indicazioni" ||
+                lower == "prosegui sul percorso" ||
+                lower == "segui il percorso" ||
                 lower.contains("navigazione in corso") ||
                 lower.contains("tocca per tornare") ||
                 lower.contains("tap to return") ||

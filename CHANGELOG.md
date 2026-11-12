@@ -4,6 +4,49 @@ Tutte le modifiche rilevanti a questo progetto saranno documentate in questo fil
 
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/).
 
+## [1.6.1] - 2026-11-12
+
+### Aggiunto & Risolto (Supporto Google Maps Automotive, Fix Cursore 3D Invisibile e Risoluzione Modalità Semplice / Piccolo)
+- **Risoluzione Modalità Semplice su Display HDMI (`NavClusterService.kt`)**:
+  - In `MODE_SEMPLICE`, la finestra Android `ClusterPresentation` su Display 1 viene ora chiusa esplicitamente (`closeClusterPresentation()`). Questo evita che il layer HDMI opaco a tutto schermo (1920x720) disturbi o copra i quadranti nativi QNX del cruscotto (tachimetro, powermeter, ADAS).
+  - La visualizzazione delle svolte in modalità Semplice è ora affidata al 100% al widget TBT nativo del cruscotto QNX, alimentato in tempo reale via pacchetti Protobuf nativi DiLink (`display_mode=2`, `MAP_STATE_SIMPLE_OPEN=7`, `sendTbtInfo`).
+- **Risoluzione Cursore 3D Invisibile e Centratura in Modalità Piccolo (`ClusterPresentation.kt`)**:
+  - Rimosso l'errato azzeramento di `bearingTintColor` e `foregroundTintColor` a `Color.TRANSPARENT`: MapLibre Android SDK applicava `setTint(0x00000000)` al drawable del cursore (`ic_nav_cursor_arrow.xml`), tingendolo di nero trasparente e rendendolo invisibile sulla mappa.
+  - Il cursore 3D preserva la colorazione vettoriale ad alto contrasto (bordo bianco, faccette ciano `#00E5FF` / `#0097A7`) ed è centrato simmetricamente nel riquadro destro QNX (X=1350..1830, Y=220..680) all'interno di un container dedicato 480x460 con camera padding bilanciato (0, 160, 0, 30).
+- **Supporto Completo Google Maps Automotive (`app.morphe.android.apps.maps.automotive`)**:
+  - Aggiunto il package id `app.morphe.android.apps.maps.automotive` in `AndroidManifest.xml` (`<queries>`), garantendo la visibilità del package su Android 11+.
+  - Registrato in `NavNotificationListener.TARGET_PACKAGES` con mapping automatico del nome sorgente su `"Google Maps"`, abilitando la cattura real-time delle notifiche ongoing di navigazione e manovra.
+  - Aggiunto in `NavAccessibilityService.NAV_PACKAGES` e in `accessibility_service_config.xml`, abilitando la cattura UI dei banner di svolta quando l'app è in primo piano sul display principale.
+
+
+### Aggiunto & Risolto (Allineamento Itinerario 1:1 Nativo ABRP Mapbox -> Cluster MapLibre & Hardening Anti-Discrepanza `RouteFetcher` per HERE WeGo / Google Maps)
+- **Bridge Nativo Polilinea Percorso 1:1 da ABRP (`AbrpRouteBridge` + `TbtBroadcastReceiver.kt` + `ClusterPresentation.kt`)**:
+  - Iniettata in ABRP (`com.iternio.abrpapp`, `classes5.dex`) la classe asincrona `AbrpRouteBridge` agganciata a `RNMBXShapeSource.setShape`, `addToMap` e `removeFromMap`, che intercetta direttamente la `FeatureCollection` GeoJSON reale calcolata da ABRP (comprensiva di colonnine EV intermedie, waypoint, varianti selezionate `is_selected` e ricalcoli traffico), filtrando automaticamente scie percorse (`drivenPathSource`), frecce d'incrocio (`routeInstruction*`), traffico e marker.
+  - Compressione `GZIP` (`route_geojson_gzip`) e ricezione in `TbtBroadcastReceiver` + registrazione dinamica `ContextCompat.RECEIVER_EXPORTED` in `NavClusterService.onCreate()` per garantire consegna istantanea su Android 11+ anche da broadcast impliciti (`targetSdk 35`) senza dipendere da `<queries>` nel manifest di ABRP.
+  - Priorità assoluta su MapLibre (`byd-route-source`) in `ClusterPresentation`: quando è attivo un percorso autorevole 1:1, il fallback OSRM viene completamente bypassato, eliminando ogni divergenza tra tablet centrale e cruscotto.
+- **Eliminazione Discrepanza Tracciato su HERE WeGo e Destinazioni Simboliche (`RouteFetcher.kt`, `NavNotificationListener.kt`, `RouteFetcherTest.kt`)**:
+  - **Stop geocoding cieco della prossima via di svolta**: rimosso in `RouteFetcher.extractTargetQuery` il fallback su `instruction` quando `destination` è assente o non geocodificabile (caso tipico di HERE WeGo che espone solo il banner della prossima manovra come `"E80 A90"` o `"Uscita 32 Pisana"`), evitando che OSRM inventi uscite errate o inversioni a U sulle carreggiate complanari; in assenza di rotta autorevole o destinazione reale, la mappa 3D mostra pulitamente carreggiata, freccia GPS 3D live e Card HUD TBT reale.
+  - **Pulizia prefissi di riepilogo e blocco destinazioni simboliche**: rimozione automatica di `"Viaggio verso "`, `"Viaggio per "`, `"Verso "`, `"Trip to "` ecc. (`cleanDestinationLabel`) e blocco tassativo dei preferiti simbolici (`"Casa"`, `"Lavoro"`, `"Ufficio"`, `"Home"`, `"Work"`, `"Posizione salvata"`) che prima venivano geocodificati su POI casuali omonimi.
+  - **Filtro fisico di coerenza sulla distanza residua**: validazione Haversine `[0.20x .. 1.15x]` e distanza stradale OSRM `[0.45x .. 2.20x]` rispetto a `remainingTimeDistance` (es. `"32 min · 34 km"`), più `viewbox` Nominatim dinamico per viaggi extraurbani, scartando omonimie stradali fuori scala.
+
+### Risolto (Audit Forense Guida Live 2026-11-11: Fix Freeze Main Thread 30.7s Adreno, Zero GPU in `Semplice`, Auto-Heal `NavAccessibilityService` da `mCrashedServices` e Anti-Spam Geocoding)
+- **Eliminazione Freeze 30.724ms su Main Thread (`Dispatch took 30724ms`) e Saturazione `Adreno-GSL_RPC` / `pool 4` (`ClusterPresentation.kt`, `activity_cluster_map.xml`, `NavClusterService.kt`)**:
+  - Rimossa la `<TextureView android:id="@+id/presentationMapTextureView">` inutilizzata a pieno schermo (`1920x720`) da `activity_cluster_map.xml`.
+  - Creazione **realmente lazy** di MapLibre `MapView` (`requiresMapRendering(currentMode)`): in `MODE_SEMPLICE` (`mode = 2`) `MapView` e `GLTextureViewRenderThread` non vengono mai istanziati (vero **0% carico GPU** e zero allocazioni di tile/shader).
+  - Sospensione effettiva del thread OpenGL (`pauseAndStopMap()` -> `cancelTransitions()` + `onPause()` + `onStop()`) quando si passa da `Piccolo`/`Intero` a `Semplice` (in MapLibre 11.5.0 `onPause()` è un no-op: solo `onStop()` parcheggia `GLTextureViewRenderThread`) e tetto `setMaximumFps(20)` sul quadro strumenti, più blocco di `updateMapCamera()` quando la mappa non è visibile.
+  - **Teardown a due fasi (`closeSafely`)**: arresto di `GLTextureViewRenderThread` mentre la `Surface` della finestra `Presentation` è ancora viva e distruzione differita (`+80ms`) di `MapView` + `dismiss()`, eliminando il deadlock da 30s sul fence EGL Qualcomm Adreno.
+  - Utilizzo prioritario della finestra standard `TYPE_PRESENTATION` con fallback automatico su `TYPE_APPLICATION_OVERLAY` solo se richiesto dal display OEM, eliminando il leak `AppOps code 24` (`OP_SYSTEM_ALERT_WINDOW`).
+- **Auto-Ripristino `NavAccessibilityService` da `mCrashedServices` su Android 11 + DiLink 5 (`NavClusterService.kt`, `NavAccessibilityService.kt`)**:
+  - Rilevato da `dumpsys accessibility` che l'uccisione del processo da parte del cleaner BYD inserisce `NavAccessibilityService` in `Crashed services`, stato da cui Android 11 non effettua più il rebind finché il componente non viene rimosso e ri-aggiunto a `ENABLED_ACCESSIBILITY_SERVICES`.
+  - Integrato in `ensureAccessibilityServiceEnabled()` il meccanismo di self-healing con verifica `NavAccessibilityService.isConnected` e ciclo atomico `strip` + `re-add` (`+450ms`) mentre `NavClusterService` è vivo (`isAppRunning(uid) == true`), riattivando la cattura live dei banner di svolta di HERE WeGo e ABRP.
+  - Preservati in `NavAccessibilityService.onServiceConnected()` il flag `FLAG_INCLUDE_NOT_IMPORTANT_VIEWS` (indispensabile per i nodi semantici Flutter di HERE WeGo) e `packageNames`, aggiunto fallback multi-display su `windows` e normalizzazione spazi unificata (`\u00A0` / `\u202F`).
+- **Eliminazione Loop Infinito Geocoding `RouteFetcher` (`query='Navigazione HERE WeGo attiva'`) e Protezione Sessione Live (`RouteFetcher.kt`, `NavNotificationListener.kt`, `VoiceGuidanceManager.kt`)**:
+  - Rimossa in `NavNotificationListener` la generazione della finta destinazione `"Navigazione HERE WeGo attiva"` sulle notifiche ongoing generiche e protetta la sessione attiva dai reset quando `NavAccessibilityService` ha emesso svolte negli ultimi 15s.
+  - Esteso `RouteFetcher.isNonGeocodablePlaceholder()` a tutte le stringhe di stato (`^navigazione\b.*\battiva$`, `"NavBridge Pronto"`, `"In attesa di indicazioni..."`, nomi app) e introdotta cache negativa con backoff esponenziale (`60s` -> `180s` -> `600s`) per query non geocodificabili.
+  - Reso l'accesso a `SharedPreferences` compatibile con Direct Boot (`UserManager.isUserUnlocked` -> `createDeviceProtectedStorageContext()`) e protetto `FOREGROUND_SERVICE_TYPE_LOCATION` con verifica preventiva di `ACCESS_BACKGROUND_LOCATION`.
+- **Ottimizzazione Packaging APK Automotive (`app/build.gradle.kts`)**:
+  - Limitato `ndk.abiFilters` all'architettura nativa `arm64-v8a` dell'IVI BYD DiLink 100 / 5.0 e abilitata la compressione `jniLibs.useLegacyPackaging = true`, eliminando ~31 MB di librerie native `x86` / `x86_64` / `armeabi-v7a` inutilizzate e riducendo drasticamente il peso dell'APK per il deploy OTA/Tailscale.
+
 ## [1.6.0] - 2026-11-10
 
 ### Aggiunto & Risolto (Rinnovo Pittogrammi Svolte Automotive 90°, Rimozione Pallino Cursore 3D, Centratura Nativa Finestra Piccola, Card HUD in Modalità Semplice, Baloon Flottante Spento di Default e Direct Boot)

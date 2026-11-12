@@ -25,12 +25,27 @@ class NavAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "BydNavA11yService"
 
+        @Volatile
+        var isConnected: Boolean = false
+            private set
+
+        @Volatile
+        var lastActivePackage: String = ""
+            private set
+
+        @Volatile
+        var lastActiveUptimeMs: Long = 0L
+            private set
+
+        private val GENERIC_STATUS_REGEX = Regex("^navigazione\\b.*\\battiva$", RegexOption.IGNORE_CASE)
+
         private val NAV_PACKAGES = setOf(
             "com.here.app.maps",
             "com.iternio.abrpapp",
             "com.iternio.abattrplan",
             "com.google.android.apps.maps",
             "app.revanced.android.apps.maps",
+            "app.morphe.android.apps.maps.automotive",
             "com.waze",
             "com.sygic.aura",
             "com.tomtom.gplay.navapp",
@@ -74,7 +89,12 @@ class NavAccessibilityService : AccessibilityService() {
          * Restituisce Pair(testoPulito, isFallbackManeuverAction).
          */
         fun cleanFlutterSemantics(raw: String): Pair<String, Boolean> {
-            var text = raw.trim().replace("\n", " ").replace(Regex("\\s+"), " ")
+            var text = raw
+                .replace('\u00A0', ' ')
+                .replace('\u202F', ' ')
+                .replace("\n", " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
             if (text.isEmpty()) return Pair("", false)
 
             // Rimuovi token tecnici che Flutter concatena nei contentDescription
@@ -135,15 +155,30 @@ class NavAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        isConnected = true
         Log.i(TAG, "NavAccessibilityService connected")
-        serviceInfo = AccessibilityServiceInfo().apply {
-            eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
-                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
-                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-            notificationTimeout = 350L
-        }
+        val info = serviceInfo ?: AccessibilityServiceInfo()
+        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+        info.flags = info.flags or
+            AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
+            AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+            AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        info.notificationTimeout = 350L
+        info.packageNames = NAV_PACKAGES.toTypedArray()
+        serviceInfo = info
+    }
+
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        isConnected = false
+        Log.w(TAG, "NavAccessibilityService unbound")
+        return super.onUnbind(intent)
+    }
+
+    override fun onDestroy() {
+        isConnected = false
+        super.onDestroy()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -154,7 +189,7 @@ class NavAccessibilityService : AccessibilityService() {
         if (now - lastInspectTimeMs < 700L) return
         lastInspectTimeMs = now
 
-        val root = rootInActiveWindow ?: return
+        val root = resolveTargetRootNode(pkg) ?: return
         try {
             inspectWindowRoot(pkg, root)
         } catch (e: Exception) {
@@ -164,6 +199,39 @@ class NavAccessibilityService : AccessibilityService() {
                 root.recycle()
             } catch (_: Exception) {}
         }
+    }
+
+    private fun resolveTargetRootNode(pkg: String): AccessibilityNodeInfo? {
+        val activeRoot = rootInActiveWindow
+        if (activeRoot != null) {
+            val activePkg = activeRoot.packageName?.toString()
+            if (activePkg == null || activePkg == pkg) {
+                return activeRoot
+            }
+            try {
+                activeRoot.recycle()
+            } catch (_: Exception) {}
+        }
+
+        try {
+            val interactiveWindows = windows
+            if (interactiveWindows != null) {
+                var matched: AccessibilityNodeInfo? = null
+                for (win in interactiveWindows) {
+                    val winRoot = win.root ?: continue
+                    if (matched == null && winRoot.packageName?.toString() == pkg) {
+                        matched = winRoot
+                    } else {
+                        try {
+                            winRoot.recycle()
+                        } catch (_: Exception) {}
+                    }
+                }
+                if (matched != null) return matched
+            }
+        } catch (_: Exception) {}
+
+        return null
     }
 
     private data class NodeTextItem(
@@ -298,8 +366,37 @@ class NavAccessibilityService : AccessibilityService() {
             else -> "Segui il percorso"
         }
 
-        val destination = roadNameParts.firstOrNull() ?: ""
-        val signature = "$pkg|$maneuverDist|$instruction|$summaryText|$etaText"
+        lastActivePackage = pkg
+        lastActiveUptimeMs = SystemClock.uptimeMillis()
+
+        val prevState = NavClusterService.instance?.currentNavState
+        val preservedDest = if (prevState != null && prevState.isActive && prevState.sourcePackage == pkg) {
+            prevState.destination.takeIf {
+                it.isNotBlank() &&
+                    !GENERIC_STATUS_REGEX.matches(it.trim()) &&
+                    !com.byd.clusternavbridge.route.RouteFetcher.isNonGeocodablePlaceholder(it)
+            } ?: ""
+        } else {
+            ""
+        }
+
+        val destination = preservedDest
+        val effectiveSummary = summaryText.ifBlank {
+            if (prevState != null && prevState.isActive && prevState.sourcePackage == pkg) {
+                prevState.remainingTimeDistance
+            } else {
+                ""
+            }
+        }
+        val effectiveEta = etaText.ifBlank {
+            if (prevState != null && prevState.isActive && prevState.sourcePackage == pkg) {
+                prevState.eta
+            } else {
+                ""
+            }
+        }
+
+        val signature = "$pkg|$maneuverDist|$instruction|$effectiveSummary|$effectiveEta"
         if (signature == lastDispatchedSignature) return
         lastDispatchedSignature = signature
 
@@ -315,7 +412,7 @@ class NavAccessibilityService : AccessibilityService() {
         Log.w(
             TAG,
             "Parsed A11y NavState ($appName): dist='$maneuverDist', inst='$instruction', " +
-                "dest='$destination', rem='$summaryText', eta='$etaText'"
+                "dest='$destination', rem='$effectiveSummary', eta='$effectiveEta'"
         )
 
         val state = NavState(
@@ -325,8 +422,8 @@ class NavAccessibilityService : AccessibilityService() {
             distance = maneuverDist,
             instruction = instruction,
             destination = destination,
-            eta = etaText,
-            remainingTimeDistance = summaryText
+            eta = effectiveEta,
+            remainingTimeDistance = effectiveSummary
         )
 
         if (NavClusterService.instance == null) {

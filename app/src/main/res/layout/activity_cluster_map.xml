@@ -5,12 +5,6 @@
     android:background="#0A0E14"
     android:keepScreenOn="true">
 
-    <!-- OEM Neusoft Compatible Cluster Surface TextureView -->
-    <TextureView
-        android:id="@+id/presentationMapTextureView"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
-
     <!-- Lazy Container for MapLibre 3D Vector Map View (Viewport 1920x720 centrata su X=960) -->
     <FrameLayout
         android:id="@+id/mapContainer"
